@@ -1,57 +1,55 @@
 # Proyecto 1 - Análisis semántico de Compiscript
 
-Esta carpeta contendrá la evolución del analizador del Laboratorio 1 para incorporar un AST, su representación visual, una tabla de símbolos y el análisis semántico, sin ejecutar los programas ni generar código.
+Aplicación de escritorio que integra el lexer y parser de ANTLR del Laboratorio 1 con un árbol sintáctico abstracto (AST) independiente, un Visitor extensible y una representación jerárquica navegable dentro del IDE.
 
-## Flujo previsto
+El proyecto realiza análisis léxico y sintáctico y construye el AST. No ejecuta programas, no genera código y todavía no implementa las reglas semánticas ni la tabla de símbolos.
 
-```text
-Archivo .cps
-    ↓
-Lexer de ANTLR
-    ↓
-Parser de ANTLR
-    ↓
-Parse tree
-    ↓
-Construcción del AST
-    ↓
-Visitor del AST
-    ↓
-Tabla de símbolos y análisis semántico
-    ↓
-Resultados dentro de la interfaz gráfica
+## Ejecución
+
+En Windows:
+
+```powershell
+.\iniciar.ps1
 ```
 
-## Responsabilidad: AST, visualización e integración
+También puede iniciarse directamente:
 
-- Integrar el lexer, parser y recuperación de errores del Laboratorio 1.
-- Definir los nodos del AST para todas las construcciones de Compiscript.
-- Transformar el parse tree de ANTLR en el AST.
-- Proporcionar una infraestructura de Visitor independiente de las reglas semánticas.
-- Mostrar el árbol dentro de la interfaz gráfica.
-- Crear pruebas del AST, su visualización y la integración con entradas válidas e inválidas.
-- Mantener la documentación de arquitectura y ejecución.
+```powershell
+python src\app.py
+```
 
-La implementación de las reglas semánticas y de la tabla de símbolos pertenece a los otros componentes del equipo. El AST y su Visitor deben exponer una API estable para que esos componentes no dependan directamente de las clases generadas por ANTLR.
+La interfaz permite abrir o editar un archivo `.cps`, analizarlo con `F5`, consultar diagnósticos y explorar el AST. Un doble clic en un diagnóstico o nodo del árbol lleva el cursor a su ubicación en el código.
 
-## Estructura propuesta
+## Pruebas
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+Las pruebas cubren la recuperación léxica y sintáctica heredada, construcción del AST, precedencia de operadores, estructuras de Compiscript, Visitor, visualización e integración con entradas válidas e inválidas.
+
+## Estructura
 
 ```text
 Proyecto 1/
-├── docs/                   # Arquitectura, AST y guía de ejecución
-├── examples/               # Entradas .cps de demostración
-├── grammar/                # Gramática de Compiscript
+├── docs/
+│   └── ARQUITECTURA.md
+├── examples/                 # Archivos .cps de prueba
+├── grammar/                  # Gramática ANTLR
 ├── src/
-│   ├── ast/                # Nodos, constructor y Visitor del AST
-│   ├── generated/          # Lexer/parser generados por ANTLR
-│   ├── semantic/           # Tabla de símbolos y reglas semánticas
-│   ├── ui/                 # IDE y visualización del árbol
-│   └── analysis_pipeline.py
+│   ├── analyzer.py           # Pipeline y diagnósticos
+│   ├── ast_nodes.py          # Modelo del AST
+│   ├── ast_builder.py        # Parse tree -> AST
+│   ├── ast_visitor.py        # Visitor base
+│   ├── ast_visualization.py  # Modelo visual del árbol
+│   ├── generated/            # Lexer/parser generados
+│   ├── ui.py                 # IDE y vista del AST
+│   └── app.py                # Punto de entrada
 ├── tests/
-│   ├── ast/
-│   ├── integration/
-│   └── semantic/
+│   ├── test_analyzer.py
+│   └── test_ast.py
 └── README.md
 ```
 
-Esta estructura es una propuesta inicial. Se creará gradualmente al integrar el código del laboratorio, evitando duplicar archivos generados o dependencias innecesarias hasta definir la estrategia final del equipo.
+La arquitectura y el contrato para las siguientes fases están documentados en [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md).
+
