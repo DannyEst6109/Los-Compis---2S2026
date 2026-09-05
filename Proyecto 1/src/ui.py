@@ -16,6 +16,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from analyzer import AnalysisResult, CompiscriptAnalyzer, Diagnostic
 from ast_visualization import VisualAstNode, build_visual_tree
+from symbol_table import Scope, ScopeKind, Symbol, SymbolCategory, SymbolTable, build_symbol_table
 
 
 class CompiscriptApp:
@@ -31,6 +32,7 @@ class CompiscriptApp:
     GREEN = "#147554"
     GREEN_PALE = "#E4F3EB"
     AMBER = "#986712"
+    VIOLET = "#6B3FA0"
 
     KEYWORDS = {
         "let", "var", "const", "function", "class", "print", "if", "else", "while",
@@ -47,6 +49,11 @@ class CompiscriptApp:
         self.last_result: AnalysisResult | None = None
         self._highlight_job: str | None = None
         self.ast_visual_by_item: dict[str, VisualAstNode] = {}
+
+        self.last_symbol_table: SymbolTable | None = None
+        self.last_diagnostics: list[Diagnostic] = []
+        self.symbol_by_item: dict[str, Symbol] = {}
+        self.scope_by_item: dict[str, Scope] = {}
 
         self._configure_window()
         self._configure_styles()
@@ -105,7 +112,13 @@ class CompiscriptApp:
         title_block = ttk.Frame(header, style="Header.TFrame")
         title_block.pack(side="left")
         ttk.Label(title_block, text="Analizador Compiscript", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(title_block, text="Lexer, parser y árbol sintáctico con ANTLR", style="Subtitle.TLabel").pack(anchor="w")
+
+        ttk.Label(
+            title_block,
+            text="Lexer, parser, árbol sintáctico y tabla de símbolos con ANTLR",  
+            style="Subtitle.TLabel",
+        ).pack(anchor="w")
+
 
         ttk.Button(header, text="Analizar  F5", style="Primary.TButton", command=self.analyze).pack(side="right")
         ttk.Button(header, text="Guardar", style="Secondary.TButton", command=self.save_file).pack(side="right", padx=(0, 8))
@@ -159,8 +172,11 @@ class CompiscriptApp:
         inspector_tabs.pack(fill="both", expand=True)
         diagnostics_tab = ttk.Frame(inspector_tabs, style="Surface.TFrame", padding=(2, 4))
         ast_tab = ttk.Frame(inspector_tabs, style="Surface.TFrame", padding=(2, 4))
+        symbols_tab = ttk.Frame(inspector_tabs, style="Surface.TFrame", padding=(2, 4))
+
         inspector_tabs.add(diagnostics_tab, text="Diagnósticos")
         inspector_tabs.add(ast_tab, text="Árbol sintáctico")
+        inspector_tabs.add(symbols_tab, text="Tabla de símbolos") 
 
         result_head = ttk.Frame(diagnostics_tab, style="Surface.TFrame")
         result_head.pack(fill="x")
@@ -199,6 +215,7 @@ class CompiscriptApp:
         self.results.column("description", width=320, minwidth=240, stretch=True)
         self.results.tag_configure("lexical", foreground=self.RED)
         self.results.tag_configure("syntactic", foreground="#8A4D14")
+        self.results.tag_configure("semantic", foreground=self.VIOLET) 
         results_scroll = ttk.Scrollbar(table_shell, orient="vertical", command=self.results.yview)
         results_scroll.pack(side="right", fill="y")
         self.results.pack(side="left", fill="both", expand=True)
@@ -241,14 +258,21 @@ class CompiscriptApp:
         )
         self.ast_summary_label.pack(side="right")
 
+
         ast_toolbar = ttk.Frame(ast_tab, style="Surface.TFrame")
         ast_toolbar.pack(fill="x", pady=(6, 8))
+
+        ast_toolbar_hint = ttk.Frame(ast_toolbar, style="Surface.TFrame")
+        ast_toolbar_hint.pack(fill="x")
         self.ast_detail_label = ttk.Label(
-            ast_toolbar, text="Analice el archivo para construir el AST.", style="Meta.TLabel"
+            ast_toolbar_hint, text="Analice el archivo para construir el AST.", style="Meta.TLabel"
         )
         self.ast_detail_label.pack(side="left")
-        ttk.Button(ast_toolbar, text="Contraer", style="Secondary.TButton", command=self._collapse_ast).pack(side="right")
-        ttk.Button(ast_toolbar, text="Expandir", style="Secondary.TButton", command=self._expand_ast).pack(side="right", padx=(0, 6))
+
+        ast_toolbar_actions = ttk.Frame(ast_toolbar, style="Surface.TFrame")
+        ast_toolbar_actions.pack(fill="x", pady=(6, 0))
+        ttk.Button(ast_toolbar_actions, text="Contraer", style="Secondary.TButton", command=self._collapse_ast).pack(side="right")
+        ttk.Button(ast_toolbar_actions, text="Expandir", style="Secondary.TButton", command=self._expand_ast).pack(side="right", padx=(0, 6))
 
         ast_shell = tk.Frame(ast_tab, bg=self.RULE, bd=0, padx=1, pady=1)
         ast_shell.pack(fill="both", expand=True)
@@ -280,6 +304,70 @@ class CompiscriptApp:
         )
         self.ast_empty_message.place(relx=0.5, rely=0.45, anchor="center")
 
+        symbols_head = ttk.Frame(symbols_tab, style="Surface.TFrame")
+        symbols_head.pack(fill="x")
+        ttk.Label(symbols_head, text="Tabla de símbolos", style="Section.TLabel").pack(side="left")
+        self.symbols_summary_label = tk.Label(
+            symbols_head, text="SIN GENERAR", bg="#E9E5DA", fg=self.MUTED,
+            font=("Segoe UI Semibold", 8), padx=9, pady=5,
+        )
+        self.symbols_summary_label.pack(side="right")
+
+        symbols_toolbar = ttk.Frame(symbols_tab, style="Surface.TFrame")
+        symbols_toolbar.pack(fill="x", pady=(6, 8))
+
+        symbols_toolbar_hint = ttk.Frame(symbols_toolbar, style="Surface.TFrame")
+        symbols_toolbar_hint.pack(fill="x")
+        self.symbols_detail_label = ttk.Label(
+            symbols_toolbar_hint,
+            text="Analice el archivo para construir la tabla de símbolos.",
+            style="Meta.TLabel",
+        )
+        self.symbols_detail_label.pack(side="left")
+
+        symbols_toolbar_actions = ttk.Frame(symbols_toolbar, style="Surface.TFrame")
+        symbols_toolbar_actions.pack(fill="x", pady=(6, 0))
+        ttk.Button(
+            symbols_toolbar_actions, text="Contraer", style="Secondary.TButton", command=self._collapse_symbols
+        ).pack(side="right")
+        ttk.Button(
+            symbols_toolbar_actions, text="Expandir", style="Secondary.TButton", command=self._expand_symbols
+        ).pack(side="right", padx=(0, 6))
+        symbols_shell = tk.Frame(symbols_tab, bg=self.RULE, bd=0, padx=1, pady=1)
+        symbols_shell.pack(fill="both", expand=True)
+        symbols_columns = ("category", "type", "initialized")
+        self.symbols_tree = ttk.Treeview(
+            symbols_shell, columns=symbols_columns, show="tree headings", selectmode="browse"
+        )
+        self.symbols_tree.heading("#0", text="Ámbito / símbolo")
+        self.symbols_tree.heading("category", text="Categoría")
+        self.symbols_tree.heading("type", text="Tipo")
+        self.symbols_tree.heading("initialized", text="Inic.")
+        self.symbols_tree.column("#0", width=220, minwidth=160, stretch=True)
+        self.symbols_tree.column("category", width=90, minwidth=80, stretch=False)
+        self.symbols_tree.column("type", width=110, minwidth=90, stretch=True)
+        self.symbols_tree.column("initialized", width=52, minwidth=48, anchor="center", stretch=False)
+        self.symbols_tree.tag_configure("scope", foreground=self.MUTED, font=("Segoe UI Semibold", 9))
+        symbols_scroll_y = ttk.Scrollbar(symbols_shell, orient="vertical", command=self.symbols_tree.yview)
+        symbols_scroll_x = ttk.Scrollbar(symbols_shell, orient="horizontal", command=self.symbols_tree.xview)
+        symbols_scroll_y.pack(side="right", fill="y")
+        symbols_scroll_x.pack(side="bottom", fill="x")
+        self.symbols_tree.pack(side="left", fill="both", expand=True)
+        self.symbols_tree.configure(yscrollcommand=symbols_scroll_y.set, xscrollcommand=symbols_scroll_x.set)
+        self.symbols_tree.bind("<<TreeviewSelect>>", self._show_selected_symbol_detail)
+        self.symbols_tree.bind("<Double-1>", self._go_to_selected_symbol)
+        self.symbols_tree.bind("<Return>", self._go_to_selected_symbol)
+
+        self.symbols_empty_message = tk.Label(
+            symbols_shell,
+            text="La tabla de símbolos aparecerá aquí después del análisis.",
+            bg=self.SURFACE,
+            fg=self.MUTED,
+            font=("Segoe UI", 11),
+            justify="center",
+        )
+        self.symbols_empty_message.place(relx=0.5, rely=0.45, anchor="center")
+
         footer = ttk.Frame(self.root, style="App.TFrame", padding=(20, 0, 20, 10))
         footer.pack(fill="x")
         self.position_label = ttk.Label(footer, text="Línea 1, columna 1", style="Status.TLabel")
@@ -288,6 +376,7 @@ class CompiscriptApp:
         self.status_label.pack(side="right")
         self.editor.bind("<KeyRelease>", self._update_cursor_position, add="+")
         self.editor.bind("<ButtonRelease-1>", self._update_cursor_position, add="+")
+
 
     def _configure_editor_tags(self) -> None:
         self.editor.tag_configure("keyword", foreground=self.BLUE, font=("Cascadia Mono", 10, "bold"))
@@ -379,6 +468,8 @@ class CompiscriptApp:
         self.editor.edit_modified(False)
         self.dirty = False
         self.last_result = None
+        self.last_symbol_table = None  
+        self.last_diagnostics = []
         self._update_file_labels()
         self._refresh_line_numbers()
         self._highlight_source()
@@ -413,10 +504,27 @@ class CompiscriptApp:
         self.root.update_idletasks()
         try:
             result = self.analyzer.analyze(source)
+            # AST ya recuperado por el analizador léxico/sintáctico; si
+            # result.ast es None, build_symbol_table devuelve una tabla vacía.
+            symbol_table, semantic_diagnostics = build_symbol_table(result.ast)
         finally:
             self.root.configure(cursor="")
         self.last_result = result
+        self.last_symbol_table = symbol_table
+        self.last_diagnostics = self._merge_diagnostics(result.diagnostics, semantic_diagnostics)
         self._show_result(result)
+
+
+    @staticmethod
+    def _merge_diagnostics(
+        syntax_diagnostics: tuple[Diagnostic, ...], semantic_diagnostics: list
+    ) -> list:
+        order = {"Léxico": 0, "Sintáctico": 1, "Semántico": 2}
+        combined = list(syntax_diagnostics) + list(semantic_diagnostics)
+        combined.sort(key=lambda item: (item.line, item.column, order.get(item.kind, 3)))
+        return combined
+
+
 
     def _show_result(self, result: AnalysisResult) -> None:
         for item in self.results.get_children():
@@ -425,14 +533,18 @@ class CompiscriptApp:
         self.editor.tag_remove("active_error", "1.0", "end")
         self.empty_message.place_forget()
         self._show_ast(result)
+        self._show_symbol_table(result, self.last_symbol_table)
 
-        if result.is_valid:
+        diagnostics = self.last_diagnostics
+        semantic_count = sum(1 for item in diagnostics if item.kind == "Semántico")
+
+        if not diagnostics:
             self.summary_label.configure(text="SIN ERRORES", bg=self.GREEN_PALE, fg=self.GREEN)
             self.result_detail.configure(
                 text=f"{result.line_count} líneas · {result.token_count} tokens · {result.elapsed_ms:.1f} ms"
             )
             self.empty_message.configure(
-                text="El archivo fue analizado correctamente.\nNo se encontraron errores léxicos ni sintácticos.",
+                text="El archivo fue analizado correctamente.\nNo se encontraron errores léxicos, sintácticos ni semánticos.",
                 fg=self.GREEN,
             )
             self.empty_message.place(relx=0.5, rely=0.45, anchor="center")
@@ -442,13 +554,16 @@ class CompiscriptApp:
             self.status_label.configure(text="Análisis completado sin errores")
             return
 
-        total = len(result.diagnostics)
+        total = len(diagnostics)
         self.summary_label.configure(text=f"{total} {'ERROR' if total == 1 else 'ERRORES'}", bg=self.RED_PALE, fg=self.RED)
         self.result_detail.configure(
-            text=f"{result.lexical_count} léxicos · {result.syntactic_count} sintácticos · {result.elapsed_ms:.1f} ms"
+            text=(
+                f"{result.lexical_count} léxicos · {result.syntactic_count} sintácticos · "
+                f"{semantic_count} semánticos · {result.elapsed_ms:.1f} ms"
+            )
         )
-        for index, diagnostic in enumerate(result.diagnostics):
-            tag = "lexical" if diagnostic.kind == "Léxico" else "syntactic"
+        for index, diagnostic in enumerate(diagnostics):
+            tag = self._diagnostic_tag(diagnostic.kind)  
             self.results.insert(
                 "", "end", iid=str(index),
                 values=(diagnostic.kind, diagnostic.line, diagnostic.column, diagnostic.symbol, diagnostic.description),
@@ -459,6 +574,13 @@ class CompiscriptApp:
         self.results.selection_set(first)
         self._show_selected_detail()
         self.status_label.configure(text=f"Análisis completado: {total} diagnósticos")
+
+    @staticmethod
+    def _diagnostic_tag(kind: str) -> str:
+        return {"Léxico": "lexical", "Sintáctico": "syntactic"}.get(kind, "semantic")
+
+    def _diagnostic_color(self, kind: str) -> str:
+        return {"Léxico": self.RED, "Sintáctico": self.AMBER}.get(kind, self.VIOLET)
 
     def _show_ast(self, result: AnalysisResult) -> None:
         self._clear_ast()
@@ -482,6 +604,7 @@ class CompiscriptApp:
         self.ast_detail_label.configure(
             text="Seleccione un nodo; doble clic para ir a su ubicación en el código."
         )
+
 
     def _insert_ast_node(self, parent: str, visual: VisualAstNode, depth: int) -> str:
         item = self.ast_tree.insert(
@@ -554,24 +677,148 @@ class CompiscriptApp:
             self._set_ast_open(item, False)
             self.ast_tree.item(item, open=True)
 
+    def _show_symbol_table(self, result: AnalysisResult, table: SymbolTable | None) -> None:
+        self._clear_symbols()
+        if result.ast is None or table is None:
+            self.symbols_summary_label.configure(text="NO DISPONIBLE", bg=self.RED_PALE, fg=self.RED)
+            self.symbols_detail_label.configure(
+                text="La recuperación sintáctica no produjo un AST navegable."
+            )
+            self.symbols_empty_message.configure(
+                text="No fue posible construir la tabla de símbolos.\nRevise primero los errores sintácticos.",
+                fg=self.RED,
+            )
+            self.symbols_empty_message.place(relx=0.5, rely=0.45, anchor="center")
+            return
+
+        self._insert_scope_node("", table.global_scope, depth=0)
+        self.symbols_empty_message.place_forget()
+        total = len(table.all_symbols())
+        self.symbols_summary_label.configure(text=f"{total} SÍMBOLOS", bg=self.GREEN_PALE, fg=self.GREEN)
+        self.symbols_detail_label.configure(
+            text="Seleccione un símbolo; doble clic para ir a su declaración en el código."
+        )
+
+    def _insert_scope_node(self, parent: str, scope: Scope, depth: int) -> str:
+        label = "Global" if scope.kind is ScopeKind.GLOBAL else f"{scope.kind.value} · {scope.name}"
+        item = self.symbols_tree.insert(
+            parent, "end", text=label, values=("", "", ""), open=depth < 2, tags=("scope",),
+        )
+        self.scope_by_item[item] = scope
+        for symbol in scope.symbols.values():
+            self._insert_symbol_node(item, symbol)
+        for child in scope.children:
+            self._insert_scope_node(item, child, depth + 1)
+        return item
+
+    def _insert_symbol_node(self, parent: str, symbol: Symbol) -> str:
+        item = self.symbols_tree.insert(
+            parent,
+            "end",
+            text=symbol.name,
+            values=(symbol.category.value, symbol.type_name or "-", "sí" if symbol.initialized else "no"),
+            open=False,
+        )
+        self.symbol_by_item[item] = symbol
+        return item
+
+    def _clear_symbols(self, message: str | None = None) -> None:
+        for item in self.symbols_tree.get_children():
+            self.symbols_tree.delete(item)
+        self.symbol_by_item.clear()
+        self.scope_by_item.clear()
+        self.symbols_summary_label.configure(text="SIN GENERAR", bg="#E9E5DA", fg=self.MUTED)
+        self.symbols_detail_label.configure(
+            text=message or "Analice el archivo para construir la tabla de símbolos."
+        )
+        self.symbols_empty_message.configure(
+            text="La tabla de símbolos aparecerá aquí después del análisis.", fg=self.MUTED
+        )
+        self.symbols_empty_message.place(relx=0.5, rely=0.45, anchor="center")
+    
+    def _show_selected_symbol_detail(self, _event=None) -> None:
+        selected = self.symbols_tree.selection()
+        if not selected:
+            return
+        symbol = self.symbol_by_item.get(selected[0])
+        if symbol is None:
+            scope = self.scope_by_item.get(selected[0])
+            if scope is not None:
+                label = "global" if scope.kind is ScopeKind.GLOBAL else f"{scope.kind.value} · {scope.name}"
+                self.symbols_detail_label.configure(text=f"Ámbito: {label}")
+            return
+
+        parts = [f"{symbol.category.value} «{symbol.name}»"]
+        if symbol.type_name:
+            parts.append(f"tipo {symbol.type_name}")
+        if symbol.category is SymbolCategory.FUNCTION:
+            params = ", ".join(f"{p.name}: {p.type_name or '?'}" for p in symbol.parameters)
+            parts.append(f"({params}) -> {symbol.return_type or 'void'}")
+            if symbol.captured_names:
+                parts.append(f"captura: {', '.join(sorted(symbol.captured_names))}")
+        if symbol.category is SymbolCategory.CLASS:
+            if symbol.superclass:
+                parts.append(f"extiende {symbol.superclass}")
+            if symbol.attributes:
+                parts.append(f"atributos: {', '.join(sorted(symbol.attributes))}")
+            if symbol.methods:
+                parts.append(f"métodos: {', '.join(sorted(symbol.methods))}")
+        parts.append(f"línea {symbol.line}, columna {symbol.column}")
+        self.symbols_detail_label.configure(text=" · ".join(parts))
+
+    def _go_to_selected_symbol(self, _event=None) -> None:
+        selected = self.symbols_tree.selection()
+        if not selected:
+            return
+        symbol = self.symbol_by_item.get(selected[0])
+        if symbol is None:
+            return
+        self.editor.tag_remove("active_error", "1.0", "end")
+        start = f"{symbol.line}.{max(symbol.column - 1, 0)}"
+        self.editor.tag_add("active_error", start, f"{symbol.line}.end")
+        self.editor.mark_set("insert", start)
+        self.editor.see(start)
+        self.editor.focus_set()
+        self._update_cursor_position()
+
+    def _set_symbols_open(self, item: str, is_open: bool) -> None:
+        self.symbols_tree.item(item, open=is_open)
+        for child in self.symbols_tree.get_children(item):
+            self._set_symbols_open(child, is_open)
+
+    def _expand_symbols(self) -> None:
+        for item in self.symbols_tree.get_children():
+            self._set_symbols_open(item, True)
+
+    def _collapse_symbols(self) -> None:
+        for item in self.symbols_tree.get_children():
+            self._set_symbols_open(item, False)
+            self.symbols_tree.item(item, open=True)
+
+
+
+
+
+
+
     def _show_selected_detail(self, _event=None) -> None:
         selected = self.results.selection()
-        if not selected or self.last_result is None:
+        if not selected or not self.last_diagnostics:
             return
-        diagnostic = self.last_result.diagnostics[int(selected[0])]
+        diagnostic = self.last_diagnostics[int(selected[0])]
         self.diagnostic_detail.configure(
             text=(
                 f"{diagnostic.kind} · línea {diagnostic.line}, columna {diagnostic.column} · "
                 f"«{diagnostic.symbol}»: {diagnostic.description}"
             ),
-            fg=self.RED if diagnostic.kind == "Léxico" else self.AMBER,
+            fg=self._diagnostic_color(diagnostic.kind),
         )
 
     def _go_to_selected(self, _event=None) -> None:
         selected = self.results.selection()
-        if not selected or self.last_result is None:
+        if not selected or not self.last_diagnostics:
             return
-        diagnostic: Diagnostic = self.last_result.diagnostics[int(selected[0])]
+        diagnostic = self.last_diagnostics[int(selected[0])]
         self.editor.tag_remove("active_error", "1.0", "end")
         start = f"{diagnostic.line}.{max(diagnostic.column - 1, 0)}"
         end = f"{diagnostic.line}.{max(diagnostic.column, 1)}"
@@ -592,6 +839,8 @@ class CompiscriptApp:
         )
         self.empty_message.place(relx=0.5, rely=0.45, anchor="center")
         self._clear_ast(message or "Analice el archivo para construir el AST.")
+        self._clear_symbols(message or "Analice el archivo para construir la tabla de símbolos.")
+
 
     def _update_file_labels(self) -> None:
         if self.current_file is None:
