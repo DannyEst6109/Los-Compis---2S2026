@@ -27,12 +27,16 @@ AstBuilder
         v
 AST independiente de ANTLR
         |
-        +----------> AstVisitor ----------> tabla de símbolos / semántica
+        +----------> build_visual_tree ---------> pestaña "Árbol sintáctico"
         |
-        +----------> build_visual_tree ---> pestaña "Árbol sintáctico"
+        +----------> SymbolTableBuilder ---------> SymbolTable (ámbitos, símbolos)
+        |                                                |
+        |                                                v
+        +----------> AstVisitor (semántico) ----> usa SymbolTable, agrega diagnósticos
 ```
 
-`CompiscriptAnalyzer.analyze` es el punto de integración. Su resultado contiene los diagnósticos, métricas y un `Program` en `AnalysisResult.ast`.
+`CompiscriptAnalyzer.analyze` es el punto de integración. Su resultado contiene los diagnósticos, métricas y un `Program` en `AnalysisResult.ast`. `symbol_table.build_symbol_table(result.ast)` es el punto de integración equivalente para la fase de símbolos/ámbitos.
+ 
 
 ## Módulos
 
@@ -63,6 +67,8 @@ Implementa un Visitor del parse tree. Reduce las reglas de precedencia de ANTLR 
 
 El parse tree contiene detalles de puntuación necesarios para reconocer la gramática. El AST elimina llaves, paréntesis, comas y puntos y conserva solamente la estructura relevante para las siguientes fases.
 
+> Nota sobre `forInitializer`: la gramática nunca le asigna el `SEMI` a esta subregla (`forStatement: FOR LPAREN forInitializer? SEMI ...`); el `SEMI` lo consume `forStatement`. `visitForInitializer` no lo toca, así que no hay doble consumo ni un `SEMI` perdido.
+
 ### `ast_visitor.py`
 
 Proporciona despacho por tipo y recorrido genérico. Un componente puede implementar solamente los nodos que le interesan:
@@ -87,6 +93,32 @@ La tabla de símbolos y el verificador semántico deben ser Visitors separados p
 
 Convierte el AST en `VisualAstNode`, una estructura independiente de Tkinter con etiquetas en español, detalles, roles y ubicaciones. Esta separación permite probar la visualización sin abrir una ventana.
 
+### `symbol_table.py`
+ 
+Segundo Visitor sobre el mismo AST (`SymbolTableBuilder(AstVisitor[None])`), independiente de ANTLR y de `analyzer.py`: solo depende de `ast_nodes` y `ast_visitor`, igual que `ast_visualization.py`.
+ 
+**Modelo:**
+ 
+- `Scope`: ámbito léxico (`ScopeKind.GLOBAL | BLOCK | FUNCTION | CLASS`), con `parent`/`children` y un diccionario propio de símbolos. `resolve(name)` busca en el ámbito actual y sube por `parent` hasta encontrar el símbolo más cercano (shadowing: el ámbito más interno gana). `declare(symbol)` sólo compara contra el propio ámbito, por lo que declarar el mismo nombre en un ámbito anidado es válido.
+- `Symbol`: nombre, categoría (`variable`, `constante`, `parámetro`, `función`, `clase`), tipo, ámbito, si está inicializado, y — según la categoría — parámetros/tipo de retorno/nombres capturados (funciones) o superclase/atributos/métodos/constructor (clases).
+- `SymbolTable`: envoltorio con las operaciones que pide la rúbrica de forma explícita: `insert`, `lookup`, `update` (además de `find_class`, `class_members` con herencia, y `render()` para una vista tabular).
+- `Diagnostic`: mismo formato (`kind`, `line`, `column`, `symbol`, `description`) que `analyzer.Diagnostic`, para poder combinarse y ordenarse junto a los diagnósticos léxicos/sintácticos en el IDE sin que este módulo dependa del lexer/parser.
+**Decisiones de diseño relevantes:**
+ 
+- **Hoisting parcial por bloque.** Antes de procesar las instrucciones de un `Program`, `Block` o cuerpo de función, se registran primero las *firmas* de las funciones y clases declaradas directamente ahí (nombre, parámetros, tipo de retorno / superclase), y luego se procesan los cuerpos en el orden original. Esto permite recursión mutua entre funciones (o métodos) y referencias hacia adelante dentro del mismo ámbito, sin necesitar un pase de resolución de nombres separado.
+- **Captura de closures.** Al resolver un identificador, si el símbolo vive en un ámbito de función ancestro distinto del ámbito de función actual, se agrega su nombre a `captured_names` de la función que lo usa. Es una aproximación práctica (no un análisis de flujo completo) suficiente para el alcance del curso.
+- **Clases.** Los miembros se dividen en métodos (incluyendo `constructor`, si existe) y atributos; ambos quedan indexados en el `Symbol` de la clase (`methods`, `attributes`, `constructor`) además de vivir en el ámbito de la clase. `class_members()` combina lo propio con lo heredado siguiendo `superclass` hasta la raíz.
+- **Validaciones que sí caen aquí** (por depender directamente de ámbitos/símbolos, no de tipos): identificador duplicado en el mismo ámbito, variable no declarada, parámetro duplicado, reasignación de una constante, `break`/`continue` fuera de un bucle, `return` fuera de una función, `this` fuera de una clase, `new` de una clase no declarada, herencia de una clase no declarada.
+- **Validaciones que NO caen aquí** (le corresponden al analizador semántico, que puede apoyarse en la `SymbolTable` ya construida): compatibilidad de tipos, existencia de un atributo/método accedido con `.`, conteo y tipo de argumentos en llamadas y constructores, tipo del valor de `return` contra el tipo declarado, condiciones `boolean` en `if`/`while`/`for`/`switch`, código muerto.
+Punto de integración:
+ 
+```python
+from symbol_table import build_symbol_table
+ 
+table, semantic_diagnostics = build_symbol_table(result.ast)
+```
+ 
+
 ### `ui.py`
 
 Mantiene el editor y la tabla de diagnósticos del Laboratorio 1. El inspector derecho contiene dos pestañas:
@@ -100,7 +132,8 @@ Un doble clic o la tecla `Enter` sobre un nodo selecciona su intervalo en el edi
 
 El lexer continúa después de un carácter desconocido. El parser utiliza su estrategia de recuperación y construye un parse tree parcial. `AstBuilder` trata los hijos ausentes de forma defensiva y usa `ErrorExpression` cuando no hay una expresión completa.
 
-Si una entrada está demasiado dañada para formar una estructura navegable, `AnalysisResult.ast` puede ser `None`; los diagnósticos ya acumulados siguen mostrándose y el IDE no termina abruptamente.
+Si una entrada está demasiado dañada para formar una estructura navegable, `AnalysisResult.ast` puede ser `None`; los diagnósticos ya acumulados siguen mostrándose y el IDE no termina abruptamente. `SymbolTableBuilder` no se ejecuta en ese caso (no hay `Program` que recorrer); si `AnalysisResult.ast` no es `None` pero contiene nodos `ErrorExpression` parciales, el recorrido continúa con normalidad porque esos nodos no tienen hijos que visitar.
+ 
 
 ## Extensión para el trabajo del equipo
 
