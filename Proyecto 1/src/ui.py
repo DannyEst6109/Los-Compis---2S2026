@@ -17,6 +17,7 @@ from tkinter import filedialog, messagebox, ttk
 from analyzer import AnalysisResult, CompiscriptAnalyzer, Diagnostic
 from ast_visualization import VisualAstNode, build_visual_tree
 from symbol_table import Scope, ScopeKind, Symbol, SymbolCategory, SymbolTable, build_symbol_table
+from semantic_analyzer import analyze_semantics
 
 
 class CompiscriptApp:
@@ -49,7 +50,6 @@ class CompiscriptApp:
         self.last_result: AnalysisResult | None = None
         self._highlight_job: str | None = None
         self.ast_visual_by_item: dict[str, VisualAstNode] = {}
-
         self.last_symbol_table: SymbolTable | None = None
         self.last_diagnostics: list[Diagnostic] = []
         self.symbol_by_item: dict[str, Symbol] = {}
@@ -112,13 +112,11 @@ class CompiscriptApp:
         title_block = ttk.Frame(header, style="Header.TFrame")
         title_block.pack(side="left")
         ttk.Label(title_block, text="Analizador Compiscript", style="Title.TLabel").pack(anchor="w")
-
         ttk.Label(
             title_block,
             text="Lexer, parser, árbol sintáctico y tabla de símbolos con ANTLR",  
             style="Subtitle.TLabel",
         ).pack(anchor="w")
-
 
         ttk.Button(header, text="Analizar  F5", style="Primary.TButton", command=self.analyze).pack(side="right")
         ttk.Button(header, text="Guardar", style="Secondary.TButton", command=self.save_file).pack(side="right", padx=(0, 8))
@@ -173,7 +171,6 @@ class CompiscriptApp:
         diagnostics_tab = ttk.Frame(inspector_tabs, style="Surface.TFrame", padding=(2, 4))
         ast_tab = ttk.Frame(inspector_tabs, style="Surface.TFrame", padding=(2, 4))
         symbols_tab = ttk.Frame(inspector_tabs, style="Surface.TFrame", padding=(2, 4))
-
         inspector_tabs.add(diagnostics_tab, text="Diagnósticos")
         inspector_tabs.add(ast_tab, text="Árbol sintáctico")
         inspector_tabs.add(symbols_tab, text="Tabla de símbolos") 
@@ -215,7 +212,7 @@ class CompiscriptApp:
         self.results.column("description", width=320, minwidth=240, stretch=True)
         self.results.tag_configure("lexical", foreground=self.RED)
         self.results.tag_configure("syntactic", foreground="#8A4D14")
-        self.results.tag_configure("semantic", foreground=self.VIOLET) 
+        self.results.tag_configure("semantic", foreground=self.VIOLET)
         results_scroll = ttk.Scrollbar(table_shell, orient="vertical", command=self.results.yview)
         results_scroll.pack(side="right", fill="y")
         self.results.pack(side="left", fill="both", expand=True)
@@ -258,21 +255,14 @@ class CompiscriptApp:
         )
         self.ast_summary_label.pack(side="right")
 
-
         ast_toolbar = ttk.Frame(ast_tab, style="Surface.TFrame")
         ast_toolbar.pack(fill="x", pady=(6, 8))
-
-        ast_toolbar_hint = ttk.Frame(ast_toolbar, style="Surface.TFrame")
-        ast_toolbar_hint.pack(fill="x")
         self.ast_detail_label = ttk.Label(
-            ast_toolbar_hint, text="Analice el archivo para construir el AST.", style="Meta.TLabel"
+            ast_toolbar, text="Analice el archivo para construir el AST.", style="Meta.TLabel"
         )
         self.ast_detail_label.pack(side="left")
-
-        ast_toolbar_actions = ttk.Frame(ast_toolbar, style="Surface.TFrame")
-        ast_toolbar_actions.pack(fill="x", pady=(6, 0))
-        ttk.Button(ast_toolbar_actions, text="Contraer", style="Secondary.TButton", command=self._collapse_ast).pack(side="right")
-        ttk.Button(ast_toolbar_actions, text="Expandir", style="Secondary.TButton", command=self._expand_ast).pack(side="right", padx=(0, 6))
+        ttk.Button(ast_toolbar, text="Contraer", style="Secondary.TButton", command=self._collapse_ast).pack(side="right")
+        ttk.Button(ast_toolbar, text="Expandir", style="Secondary.TButton", command=self._expand_ast).pack(side="right", padx=(0, 6))
 
         ast_shell = tk.Frame(ast_tab, bg=self.RULE, bd=0, padx=1, pady=1)
         ast_shell.pack(fill="both", expand=True)
@@ -304,6 +294,8 @@ class CompiscriptApp:
         )
         self.ast_empty_message.place(relx=0.5, rely=0.45, anchor="center")
 
+        # pestaña completa "Tabla de símbolos", en el
+        # mismo patrón que la pestaña "Árbol sintáctico" de arriba.
         symbols_head = ttk.Frame(symbols_tab, style="Surface.TFrame")
         symbols_head.pack(fill="x")
         ttk.Label(symbols_head, text="Tabla de símbolos", style="Section.TLabel").pack(side="left")
@@ -315,24 +307,19 @@ class CompiscriptApp:
 
         symbols_toolbar = ttk.Frame(symbols_tab, style="Surface.TFrame")
         symbols_toolbar.pack(fill="x", pady=(6, 8))
-
-        symbols_toolbar_hint = ttk.Frame(symbols_toolbar, style="Surface.TFrame")
-        symbols_toolbar_hint.pack(fill="x")
         self.symbols_detail_label = ttk.Label(
-            symbols_toolbar_hint,
+            symbols_toolbar,
             text="Analice el archivo para construir la tabla de símbolos.",
             style="Meta.TLabel",
         )
         self.symbols_detail_label.pack(side="left")
-
-        symbols_toolbar_actions = ttk.Frame(symbols_toolbar, style="Surface.TFrame")
-        symbols_toolbar_actions.pack(fill="x", pady=(6, 0))
         ttk.Button(
-            symbols_toolbar_actions, text="Contraer", style="Secondary.TButton", command=self._collapse_symbols
+            symbols_toolbar, text="Contraer", style="Secondary.TButton", command=self._collapse_symbols
         ).pack(side="right")
         ttk.Button(
-            symbols_toolbar_actions, text="Expandir", style="Secondary.TButton", command=self._expand_symbols
+            symbols_toolbar, text="Expandir", style="Secondary.TButton", command=self._expand_symbols
         ).pack(side="right", padx=(0, 6))
+
         symbols_shell = tk.Frame(symbols_tab, bg=self.RULE, bd=0, padx=1, pady=1)
         symbols_shell.pack(fill="both", expand=True)
         symbols_columns = ("category", "type", "initialized")
@@ -376,7 +363,6 @@ class CompiscriptApp:
         self.status_label.pack(side="right")
         self.editor.bind("<KeyRelease>", self._update_cursor_position, add="+")
         self.editor.bind("<ButtonRelease-1>", self._update_cursor_position, add="+")
-
 
     def _configure_editor_tags(self) -> None:
         self.editor.tag_configure("keyword", foreground=self.BLUE, font=("Cascadia Mono", 10, "bold"))
@@ -468,7 +454,7 @@ class CompiscriptApp:
         self.editor.edit_modified(False)
         self.dirty = False
         self.last_result = None
-        self.last_symbol_table = None  
+        self.last_symbol_table = None
         self.last_diagnostics = []
         self._update_file_labels()
         self._refresh_line_numbers()
@@ -504,16 +490,20 @@ class CompiscriptApp:
         self.root.update_idletasks()
         try:
             result = self.analyzer.analyze(source)
-            # AST ya recuperado por el analizador léxico/sintáctico; si
-            # result.ast es None, build_symbol_table devuelve una tabla vacía.
-            symbol_table, semantic_diagnostics = build_symbol_table(result.ast)
+            # la tabla de símbolos y el analizador semántico
+            # se construyen sobre el mismo AST ya recuperado por el analizador
+            # léxico/sintáctico; si result.ast es None, ambos devuelven listas
+            # vacías en lugar de fallar.
+            symbol_table, scope_diagnostics = build_symbol_table(result.ast)
+            type_diagnostics = analyze_semantics(symbol_table, result.ast)
         finally:
             self.root.configure(cursor="")
         self.last_result = result
         self.last_symbol_table = symbol_table
-        self.last_diagnostics = self._merge_diagnostics(result.diagnostics, semantic_diagnostics)
+        self.last_diagnostics = self._merge_diagnostics(
+            result.diagnostics, scope_diagnostics + type_diagnostics
+        )
         self._show_result(result)
-
 
     @staticmethod
     def _merge_diagnostics(
@@ -524,8 +514,6 @@ class CompiscriptApp:
         combined.sort(key=lambda item: (item.line, item.column, order.get(item.kind, 3)))
         return combined
 
-
-
     def _show_result(self, result: AnalysisResult) -> None:
         for item in self.results.get_children():
             self.results.delete(item)
@@ -533,7 +521,7 @@ class CompiscriptApp:
         self.editor.tag_remove("active_error", "1.0", "end")
         self.empty_message.place_forget()
         self._show_ast(result)
-        self._show_symbol_table(result, self.last_symbol_table)
+        self._show_symbol_table(result, self.last_symbol_table)  ############modificado
 
         diagnostics = self.last_diagnostics
         semantic_count = sum(1 for item in diagnostics if item.kind == "Semántico")
@@ -604,7 +592,6 @@ class CompiscriptApp:
         self.ast_detail_label.configure(
             text="Seleccione un nodo; doble clic para ir a su ubicación en el código."
         )
-
 
     def _insert_ast_node(self, parent: str, visual: VisualAstNode, depth: int) -> str:
         item = self.ast_tree.insert(
@@ -677,6 +664,9 @@ class CompiscriptApp:
             self._set_ast_open(item, False)
             self.ast_tree.item(item, open=True)
 
+    # bloque completo de la pestaña "Tabla de
+    # símbolos", en el mismo patrón que los métodos _show_ast/_insert_ast_node
+    # de arriba, pero recorriendo la jerarquía de Scope en vez del AST.
     def _show_symbol_table(self, result: AnalysisResult, table: SymbolTable | None) -> None:
         self._clear_symbols()
         if result.ast is None or table is None:
@@ -735,7 +725,7 @@ class CompiscriptApp:
             text="La tabla de símbolos aparecerá aquí después del análisis.", fg=self.MUTED
         )
         self.symbols_empty_message.place(relx=0.5, rely=0.45, anchor="center")
-    
+
     def _show_selected_symbol_detail(self, _event=None) -> None:
         selected = self.symbols_tree.selection()
         if not selected:
@@ -795,13 +785,9 @@ class CompiscriptApp:
             self._set_symbols_open(item, False)
             self.symbols_tree.item(item, open=True)
 
-
-
-
-
-
-
     def _show_selected_detail(self, _event=None) -> None:
+        # usa self.last_diagnostics (combinado) en vez
+        # de self.last_result.diagnostics (sólo léxico/sintáctico).
         selected = self.results.selection()
         if not selected or not self.last_diagnostics:
             return
@@ -815,6 +801,7 @@ class CompiscriptApp:
         )
 
     def _go_to_selected(self, _event=None) -> None:
+        # idem, usa self.last_diagnostics.
         selected = self.results.selection()
         if not selected or not self.last_diagnostics:
             return
@@ -839,6 +826,7 @@ class CompiscriptApp:
         )
         self.empty_message.place(relx=0.5, rely=0.45, anchor="center")
         self._clear_ast(message or "Analice el archivo para construir el AST.")
+        # limpiar también la pestaña de símbolos.
         self._clear_symbols(message or "Analice el archivo para construir la tabla de símbolos.")
 
 

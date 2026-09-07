@@ -1,8 +1,8 @@
 # Proyecto 1 - Análisis semántico de Compiscript
 
-Aplicación de escritorio que integra el lexer y parser de ANTLR del Laboratorio 1 con un árbol sintáctico abstracto (AST) independiente, un Visitor extensible y una representación jerárquica navegable dentro del IDE.
+Aplicación de escritorio que integra el lexer y parser de ANTLR del Laboratorio 1 con un árbol sintáctico abstracto (AST) independiente, un Visitor extensible, una representación jerárquica navegable dentro del IDE y una tabla de símbolos con manejo de ámbitos.
 
-El proyecto realiza análisis léxico y sintáctico y construye el AST y  y a partir de él arma la tabla de símbolos con sus ámbitos (global, bloque, función, clase). Todavía no ejecuta programas ni genera código, y el analizador semántico (sistema de tipos, control de flujo, listas, reglas generales) está en desarrollo.
+El proyecto realiza análisis léxico y sintáctico, construye el AST, arma la tabla de símbolos con sus ámbitos (global, bloque, función, clase) y ejecuta el análisis semántico (sistema de tipos, control de flujo, funciones/clases, listas, código muerto). 
 
 ## Ejecución
 
@@ -26,18 +26,20 @@ La interfaz permite abrir o editar un archivo `.cps`, analizarlo con `F5`, consu
 python -m unittest discover -s tests -v
 ```
 
-Las pruebas cubren la recuperación léxica y sintáctica heredada, construcción del AST, precedencia de operadores, estructuras de Compiscript, Visitor, visualización, casos de recuperación de errores (incluyendo la aparición explícita de `ErrorExpression` navegable), e integración con entradas válidas e inválidas. `tests/test_symbol_table.py` cubre además la tabla de símbolos: ámbitos anidados y shadowing, declaraciones duplicadas, variables no declaradas, parámetros duplicados, funciones recursivas y con recursión mutua, closures, y registro de clases (atributos, métodos, constructor).
+
+Las pruebas cubren la recuperación léxica y sintáctica heredada, construcción del AST, precedencia de operadores, estructuras de Compiscript, Visitor, visualización, casos de recuperación de errores (incluyendo la aparición explícita de `ErrorExpression` navegable), e integración con entradas válidas e inválidas. `tests/test_symbol_table.py` cubre además la tabla de símbolos: ámbitos anidados y shadowing, declaraciones duplicadas, variables no declaradas, parámetros duplicados, funciones recursivas y con recursión mutua, closures, y registro de clases (atributos, métodos, constructor). `tests/test_semantic_analyzer.py` cubre el analizador semántico — aritmética, lógica, comparaciones, asignaciones, listas, condiciones de control de flujo, argumentos/tipo de retorno de funciones (incluida recursión), atributos/métodos/constructor de clases, código muerto, y que los errores no se dupliquen en cascada.
 
 ## Estado actual
+
 | Componente | Estado |
 | --- | --- |
-| Analizador léxico y sintáctico (heredado del Lab. 1) | ✅ Completo |
-| AST independiente de ANTLR + recuperación de errores | ✅ Completo |
-| Árbol sintáctico con representación visual en el IDE | ✅ Completo |
-| Tabla de símbolos, ámbitos, declaraciones, funciones y clases | ✅ Lógica completa y probada (`src/symbol_table.py`, `tests/test_symbol_table.py`) — pendiente conectarla al IDE como una pestaña visible |
-| Analizador semántico: sistema de tipos, control de flujo, listas, reglas generales | 🔲 En desarrollo |
-| Batería de tests globales de reglas semánticas | 🔲 En desarrollo |
- 
+| Analizador léxico y sintáctico (heredado del Lab. 1) | Completo |
+| AST independiente de ANTLR + recuperación de errores | Completo |
+| Árbol sintáctico con representación visual en el IDE | Completo |
+| Tabla de símbolos, ámbitos, declaraciones, funciones y clases | Completo, con pestaña propia en el IDE (`src/symbol_table.py`, `tests/test_symbol_table.py`) |
+| Analizador semántico: sistema de tipos, control de flujo, listas, reglas generales | Lógica completa y probada (`src/semantic_analyzer.py`, `tests/test_semantic_analyzer.py`) — pendiente sólo correrla contra el parser ANTLR real |
+| Batería de tests globales de reglas semánticas | `tests/test_semantic_analyzer.py` (46 casos) |
+| IDE: documentación de arquitectura y de ejecución | Este README y `docs/ARQUITECTURA.md` |
 
 ## Estructura
 
@@ -53,16 +55,17 @@ Proyecto 1/
 │   ├── ast_builder.py        # Parse tree -> AST
 │   ├── ast_visitor.py        # Visitor base
 │   ├── ast_visualization.py  # Modelo visual del árbol
-│   ├── symbol_table.py
+│   ├── symbol_table.py       # Tabla de símbolos y ámbitos (incluye node_scopes)
+│   ├── semantic_analyzer.py  # sistema de tipos, control de flujo, listas
 │   ├── generated/            # Lexer/parser generados
-│   ├── ui.py                 # IDE y vista del AST
+│   ├── ui.py                 # IDE, AST y tabla de símbolos
 │   └── app.py                # Punto de entrada
 ├── tests/
 │   ├── test_analyzer.py
-│   └── test_ast.py
-│   └── test_symbol_table.py
+│   ├── test_ast.py
+│   ├── test_symbol_table.py
+│   └── test_semantic_analyzer.py  # pruebas del analizador semántico
 └── README.md
 ```
 
 La arquitectura y el contrato para las siguientes fases están documentados en [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md).
-

@@ -197,6 +197,13 @@ class SymbolTable:
 
     def __init__(self) -> None:
         self.global_scope = Scope(ScopeKind.GLOBAL, "global")
+        # mapa nodo -> ámbito, para que el analizador
+        # semántico (otro Visitor independiente) sepa en qué ámbito vive
+        # cada nodo sin tener que reconstruir el recorrido de scopes. Solo
+        # es válido junto con el mismo Program a partir del cual se
+        # construyó esta tabla (ver build_symbol_table); no reutilizar esta
+        # tabla contra un AST distinto.
+        self.node_scopes: dict[int, "Scope"] = {}
 
     def insert(self, scope: Scope, symbol: Symbol) -> bool:
         """Inserta un símbolo en ``scope``. Devuelve ``False`` (sin lanzar
@@ -225,6 +232,13 @@ class SymbolTable:
             if hasattr(symbol, field_name):
                 setattr(symbol, field_name, value)
         return True
+
+    # consulta de la "estructura lateral indexada por
+    # nodo" mencionada en ARQUITECTURA.md, usada por el analizador
+    # semántico para resolver identificadores en el punto exacto del AST
+    # donde aparecen.
+    def scope_of(self, node: ast.AstNode) -> "Scope | None":
+        return self.node_scopes.get(id(node))
 
     def all_symbols(self) -> list[Symbol]:
         return list(self.global_scope.all_symbols())
@@ -298,6 +312,20 @@ class SymbolTableBuilder(AstVisitor[None]):
     def build(self, program: ast.Program) -> SymbolTable:
         self.visit(program)
         return self.table
+
+    # registra, para cada nodo que pasa por el
+    # despacho genérico, cuál era el ámbito activo en ese momento. Cubre la
+    # gran mayoría del árbol (todo lo que se visita via self.visit(...),
+    # incluida la recursión automática de AstVisitor.generic_visit hacia
+    # los hijos). Los pocos sitios que llaman a un visit_xxx directamente
+    # (parámetros, firmas de función/clase, el inicializador de un for)
+    # registran su propio ámbito de forma explícita más abajo.
+    def visit(self, node: ast.AstNode) -> None:
+        self._record_scope(node)
+        return super().visit(node)
+
+    def _record_scope(self, node: ast.AstNode) -> None:
+        self.table.node_scopes[id(node)] = self._current
 
     # -- utilidades internas ----------------------------------------------
     @property
@@ -390,6 +418,9 @@ class SymbolTableBuilder(AstVisitor[None]):
 
     # -- declaraciones simples ----------------------------------------------
     def visit_variable_declaration(self, node: ast.VariableDeclaration) -> None:
+        # este método también se llama de forma
+        # directa (inicializador de un for), que no pasa por self.visit().
+        self._record_scope(node)
         if node.initializer is not None:
             self.visit(node.initializer)
         symbol = Symbol(
@@ -403,6 +434,7 @@ class SymbolTableBuilder(AstVisitor[None]):
         self._declare(symbol, node)
 
     def visit_constant_declaration(self, node: ast.ConstantDeclaration) -> None:
+        self._record_scope(node)  # defensivo, por simetría con variable_declaration
         self.visit(node.initializer)
         symbol = Symbol(
             name=node.name,
@@ -415,6 +447,9 @@ class SymbolTableBuilder(AstVisitor[None]):
         self._declare(symbol, node)
 
     def visit_parameter(self, node: ast.Parameter) -> None:
+        # siempre se llama directamente desde
+        # _process_function_body, nunca vía self.visit().
+        self._record_scope(node)
         symbol = Symbol(
             name=node.name,
             category=SymbolCategory.PARAMETER,
@@ -427,6 +462,10 @@ class SymbolTableBuilder(AstVisitor[None]):
 
     # -- funciones ------------------------------------------------------------
     def _declare_function_signature(self, node: ast.FunctionDeclaration) -> None:
+        # siempre se llama directamente (nunca vía
+        # self.visit()), tanto para funciones de nivel superior como para
+        # métodos de clase.
+        self._record_scope(node)
         parameters = tuple(
             ParameterInfo(parameter.name, _type_name(parameter.type_annotation))
             for parameter in node.parameters
@@ -461,6 +500,7 @@ class SymbolTableBuilder(AstVisitor[None]):
 
     # -- clases -----------------------------------------------------------
     def _declare_class_signature(self, node: ast.ClassDeclaration) -> None:
+        self._record_scope(node)  # idem, siempre se llama directamente.
         symbol = Symbol(
             name=node.name,
             category=SymbolCategory.CLASS,
@@ -609,6 +649,11 @@ class SymbolTableBuilder(AstVisitor[None]):
 
     def visit_assignment_expression(self, node: ast.AssignmentExpression) -> None:
         if isinstance(node.target, ast.IdentifierExpression):
+            # _resolve_identifier no pasa por
+            # self.visit(), así que el nodo objetivo nunca quedaba
+            # registrado en node_scopes (lo necesita el analizador
+            # semántico para resolver "x" en "x = valor;").
+            self._record_scope(node.target)
             symbol = self._resolve_identifier(node.target.name, node.target)
             if symbol is not None:
                 if symbol.category is SymbolCategory.CONSTANT:
