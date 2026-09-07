@@ -1,11 +1,4 @@
-"""
-THESIS: Una mesa de corrección convierte la salida técnica del parser en marcas claras sobre el archivo y evita el tablero genérico.
-OWN-WORLD: Papel marfil, tinta azul noche, reglas finas, rojo de corrección y verde de aprobación; controles planos y tipografía de trabajo.
-STORY: El usuario abre un archivo, conserva el código a la vista, ejecuta el análisis y salta desde cada diagnóstico hasta su origen.
-FIRST VIEWPORT: Encabezado compacto, acciones a la derecha, código en el panel principal y resultados en una columna de inspección.
-FORM: Prueba editorial anotada, quinta dirección; seed c4822037.
-FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
-"""
+"""Interfaz de escritorio para analizar y explorar archivos Compiscript."""
 
 from __future__ import annotations
 
@@ -24,8 +17,11 @@ class CompiscriptApp:
     PAPER = "#F3F0E7"
     SURFACE = "#FFFEFA"
     INK = "#17243A"
-    MUTED = "#566277"
-    RULE = "#D7D2C6"
+    MUTED = "#4E5B70"
+    RULE = "#C9C5BA"
+    SOFT = "#ECE9E0"
+    DETAIL = "#F7F5EF"
+    FOCUS = "#5F86C9"
     BLUE = "#315AA6"
     BLUE_HOVER = "#274A89"
     RED = "#B62C46"
@@ -74,32 +70,57 @@ class CompiscriptApp:
         style.configure("App.TFrame", background=self.PAPER)
         style.configure("Surface.TFrame", background=self.SURFACE)
         style.configure("Header.TFrame", background=self.INK)
-        style.configure("Title.TLabel", background=self.INK, foreground="#FFFFFF", font=("Segoe UI Semibold", 18))
-        style.configure("Subtitle.TLabel", background=self.INK, foreground="#C9D2E1", font=("Segoe UI", 9))
-        style.configure("Section.TLabel", background=self.SURFACE, foreground=self.INK, font=("Segoe UI Semibold", 11))
+        style.configure("Title.TLabel", background=self.INK, foreground="#FFFFFF", font=("Segoe UI Semibold", 19))
+        style.configure("Subtitle.TLabel", background=self.INK, foreground="#D6DEEA", font=("Segoe UI", 9))
+        style.configure("Section.TLabel", background=self.SURFACE, foreground=self.INK, font=("Segoe UI Semibold", 12))
         style.configure("Meta.TLabel", background=self.SURFACE, foreground=self.MUTED, font=("Segoe UI", 9))
         style.configure("Status.TLabel", background=self.PAPER, foreground=self.MUTED, font=("Segoe UI", 9))
-        style.configure("Primary.TButton", background=self.BLUE, foreground="#FFFFFF", borderwidth=0, padding=(18, 10), font=("Segoe UI Semibold", 9))
-        style.map("Primary.TButton", background=[("active", self.BLUE_HOVER), ("disabled", "#9AA8BE")])
-        style.configure("Secondary.TButton", background="#FFFFFF", foreground=self.INK, bordercolor="#BCC4D0", borderwidth=1, padding=(14, 9), font=("Segoe UI Semibold", 9))
-        style.map("Secondary.TButton", background=[("active", "#EDF0F5")])
-        style.configure("Treeview", background=self.SURFACE, fieldbackground=self.SURFACE, foreground=self.INK, rowheight=32, borderwidth=0, font=("Segoe UI", 9))
-        style.configure("Treeview.Heading", background="#E9E5DA", foreground=self.INK, relief="flat", font=("Segoe UI Semibold", 9), padding=(8, 8))
-        style.map("Treeview", background=[("selected", "#DCE6F7")], foreground=[("selected", self.INK)])
+        style.configure(
+            "Primary.TButton", background=self.BLUE, foreground="#FFFFFF", borderwidth=1,
+            bordercolor=self.BLUE, focuscolor="#AFC6EC", focusthickness=2,
+            padding=(17, 10), font=("Segoe UI Semibold", 9),
+        )
+        style.map(
+            "Primary.TButton",
+            background=[("active", self.BLUE_HOVER), ("pressed", "#193C74"), ("disabled", "#8F9DB3")],
+            bordercolor=[("focus", "#FFFFFF"), ("active", self.BLUE_HOVER)],
+        )
+        style.configure(
+            "Secondary.TButton", background="#FFFFFF", foreground=self.INK,
+            bordercolor="#AEB7C5", borderwidth=1, focuscolor=self.FOCUS, focusthickness=2,
+            padding=(14, 9), font=("Segoe UI Semibold", 9),
+        )
+        style.map(
+            "Secondary.TButton",
+            background=[("active", "#EEF1F5"), ("pressed", "#E1E6ED")],
+            bordercolor=[("focus", self.BLUE), ("active", "#8F9BAC")],
+        )
+        style.configure(
+            "Treeview", background=self.SURFACE, fieldbackground=self.SURFACE,
+            foreground=self.INK, rowheight=30, borderwidth=0, font=("Segoe UI", 9),
+        )
+        style.configure(
+            "Treeview.Heading", background=self.SOFT, foreground=self.INK, relief="flat",
+            font=("Segoe UI Semibold", 9), padding=(8, 8),
+        )
+        style.map(
+            "Treeview", background=[("selected", "#DCE6F7")],
+            foreground=[("selected", self.INK)],
+        )
         style.configure("TPanedwindow", background=self.PAPER, sashwidth=8)
         style.configure("TNotebook", background=self.SURFACE, borderwidth=0, tabmargins=(0, 0, 0, 8))
         style.configure(
-            "TNotebook.Tab", background="#E9E5DA", foreground=self.MUTED,
-            padding=(14, 8), font=("Segoe UI Semibold", 9), borderwidth=0,
+            "TNotebook.Tab", background=self.SOFT, foreground=self.MUTED,
+            padding=(14, 9), font=("Segoe UI Semibold", 9), borderwidth=0,
         )
         style.map(
             "TNotebook.Tab",
-            background=[("selected", self.INK), ("active", "#DCE2EC")],
+            background=[("selected", self.INK), ("active", "#DCE2EC"), ("focus", "#DCE6F7")],
             foreground=[("selected", "#FFFFFF"), ("active", self.INK)],
         )
 
     def _build_layout(self) -> None:
-        header = ttk.Frame(self.root, style="Header.TFrame", padding=(24, 16))
+        header = ttk.Frame(self.root, style="Header.TFrame", padding=(24, 14))
         header.pack(fill="x")
 
         mark = tk.Canvas(header, width=38, height=38, bg=self.INK, highlightthickness=0)
@@ -114,39 +135,55 @@ class CompiscriptApp:
         ttk.Label(title_block, text="Analizador Compiscript", style="Title.TLabel").pack(anchor="w")
         ttk.Label(
             title_block,
-            text="Lexer, parser, árbol sintáctico y tabla de símbolos con ANTLR",  
+            text="Análisis léxico, sintáctico y semántico · AST · símbolos",
             style="Subtitle.TLabel",
         ).pack(anchor="w")
 
-        ttk.Button(header, text="Analizar  F5", style="Primary.TButton", command=self.analyze).pack(side="right")
-        ttk.Button(header, text="Guardar", style="Secondary.TButton", command=self.save_file).pack(side="right", padx=(0, 8))
-        ttk.Button(header, text="Abrir archivo", style="Secondary.TButton", command=self.open_file).pack(side="right", padx=(0, 8))
+        actions = ttk.Frame(header, style="Header.TFrame")
+        actions.pack(side="right")
+        self.open_button = ttk.Button(
+            actions, text="Abrir  Ctrl+O", style="Secondary.TButton", command=self.open_file, takefocus=True
+        )
+        self.open_button.grid(row=0, column=0, padx=(0, 8))
+        self.save_button = ttk.Button(
+            actions, text="Guardar  Ctrl+S", style="Secondary.TButton", command=self.save_file, takefocus=True
+        )
+        self.save_button.grid(row=0, column=1, padx=(0, 8))
+        self.analyze_button = ttk.Button(
+            actions, text="Analizar  F5", style="Primary.TButton", command=self.analyze, takefocus=True
+        )
+        self.analyze_button.grid(row=0, column=2)
 
-        body = ttk.Frame(self.root, style="App.TFrame", padding=(18, 18, 18, 10))
+        body = ttk.Frame(self.root, style="App.TFrame", padding=(18, 18, 18, 12))
         body.pack(fill="both", expand=True)
-        panes = ttk.Panedwindow(body, orient="horizontal")
-        panes.pack(fill="both", expand=True)
+        self.panes = ttk.Panedwindow(body, orient="horizontal")
+        self.panes.pack(fill="both", expand=True)
 
-        editor_panel = ttk.Frame(panes, style="Surface.TFrame", padding=(16, 14))
-        results_panel = ttk.Frame(panes, style="Surface.TFrame", padding=(16, 14))
-        panes.add(editor_panel, weight=1)
-        panes.add(results_panel, weight=1)
+        editor_border = tk.Frame(self.panes, bg=self.RULE, bd=0, padx=1, pady=1)
+        results_border = tk.Frame(self.panes, bg=self.RULE, bd=0, padx=1, pady=1)
+        editor_panel = ttk.Frame(editor_border, style="Surface.TFrame", padding=(16, 14))
+        results_panel = ttk.Frame(results_border, style="Surface.TFrame", padding=(16, 14))
+        editor_panel.pack(fill="both", expand=True)
+        results_panel.pack(fill="both", expand=True)
+        self.panes.add(editor_border, weight=3)
+        self.panes.add(results_border, weight=2)
+        self.root.after_idle(self._set_initial_split)
 
         self.file_name_label = ttk.Label(editor_panel, text="Ningún archivo abierto", style="Section.TLabel")
         self.file_name_label.pack(anchor="w")
         self.file_path_label = ttk.Label(editor_panel, text="Seleccione un archivo .cps para comenzar", style="Meta.TLabel")
         self.file_path_label.pack(anchor="w", pady=(2, 10))
 
-        editor_shell = tk.Frame(editor_panel, bg=self.RULE, bd=0, padx=1, pady=1)
-        editor_shell.pack(fill="both", expand=True)
-        editor_scroll_x = ttk.Scrollbar(editor_shell, orient="horizontal")
+        self.editor_shell = tk.Frame(editor_panel, bg=self.RULE, bd=0, padx=1, pady=1)
+        self.editor_shell.pack(fill="both", expand=True)
+        editor_scroll_x = ttk.Scrollbar(self.editor_shell, orient="horizontal")
         editor_scroll_x.pack(side="bottom", fill="x")
-        text_row = tk.Frame(editor_shell, bg=self.SURFACE)
+        text_row = tk.Frame(self.editor_shell, bg=self.SURFACE)
         text_row.pack(fill="both", expand=True)
 
         self.line_numbers = tk.Text(
             text_row, width=5, padx=8, pady=12, bd=0, relief="flat", takefocus=0,
-            background="#EAE6DB", foreground="#625F69", font=("Cascadia Mono", 10), state="disabled",
+            background=self.SOFT, foreground="#5A6170", font=("Cascadia Mono", 10), state="disabled",
         )
         self.line_numbers.pack(side="left", fill="y")
 
@@ -154,8 +191,9 @@ class CompiscriptApp:
         scroll.pack(side="right", fill="y")
         self.editor = tk.Text(
             text_row, undo=True, wrap="none", padx=14, pady=12, bd=0, relief="flat",
-            background=self.SURFACE, foreground=self.INK, insertbackground=self.BLUE,
+            background=self.SURFACE, foreground=self.INK, insertbackground=self.BLUE, insertwidth=2,
             selectbackground="#CBD9F0", selectforeground=self.INK, font=("Cascadia Mono", 10),
+            spacing1=1, spacing3=1,
             yscrollcommand=lambda first, last: self._sync_scroll(first, last, scroll),
             xscrollcommand=editor_scroll_x.set,
         )
@@ -164,22 +202,24 @@ class CompiscriptApp:
         editor_scroll_x.configure(command=self.editor.xview)
         self.editor.bind("<<Modified>>", self._on_text_modified)
         self.editor.bind("<KeyRelease>", lambda _: self._schedule_highlight())
+        self.editor.bind("<FocusIn>", lambda _: self.editor_shell.configure(bg=self.FOCUS))
+        self.editor.bind("<FocusOut>", lambda _: self.editor_shell.configure(bg=self.RULE))
         self._configure_editor_tags()
 
-        inspector_tabs = ttk.Notebook(results_panel)
-        inspector_tabs.pack(fill="both", expand=True)
-        diagnostics_tab = ttk.Frame(inspector_tabs, style="Surface.TFrame", padding=(2, 4))
-        ast_tab = ttk.Frame(inspector_tabs, style="Surface.TFrame", padding=(2, 4))
-        symbols_tab = ttk.Frame(inspector_tabs, style="Surface.TFrame", padding=(2, 4))
-        inspector_tabs.add(diagnostics_tab, text="Diagnósticos")
-        inspector_tabs.add(ast_tab, text="Árbol sintáctico")
-        inspector_tabs.add(symbols_tab, text="Tabla de símbolos") 
+        self.inspector_tabs = ttk.Notebook(results_panel, takefocus=True)
+        self.inspector_tabs.pack(fill="both", expand=True)
+        diagnostics_tab = ttk.Frame(self.inspector_tabs, style="Surface.TFrame", padding=(2, 4))
+        ast_tab = ttk.Frame(self.inspector_tabs, style="Surface.TFrame", padding=(2, 4))
+        symbols_tab = ttk.Frame(self.inspector_tabs, style="Surface.TFrame", padding=(2, 4))
+        self.inspector_tabs.add(diagnostics_tab, text="Diagnósticos")
+        self.inspector_tabs.add(ast_tab, text="Árbol sintáctico")
+        self.inspector_tabs.add(symbols_tab, text="Tabla de símbolos")
 
         result_head = ttk.Frame(diagnostics_tab, style="Surface.TFrame")
         result_head.pack(fill="x")
         ttk.Label(result_head, text="Resultado del análisis", style="Section.TLabel").pack(side="left")
         self.summary_label = tk.Label(
-            result_head, text="SIN ANALIZAR", bg="#E9E5DA", fg=self.MUTED,
+            result_head, text="SIN ANALIZAR", bg=self.SOFT, fg=self.MUTED,
             font=("Segoe UI Semibold", 8), padx=9, pady=5,
         )
         self.summary_label.pack(side="right")
@@ -213,6 +253,7 @@ class CompiscriptApp:
         self.results.tag_configure("lexical", foreground=self.RED)
         self.results.tag_configure("syntactic", foreground="#8A4D14")
         self.results.tag_configure("semantic", foreground=self.VIOLET)
+        self.results.tag_configure("odd", background="#F7F5EF")
         results_scroll = ttk.Scrollbar(table_shell, orient="vertical", command=self.results.yview)
         results_scroll.pack(side="right", fill="y")
         self.results.pack(side="left", fill="both", expand=True)
@@ -223,17 +264,17 @@ class CompiscriptApp:
 
         self.empty_message = tk.Label(
             table_shell, text="Abra un archivo Compiscript\ny ejecute el análisis.",
-            bg=self.SURFACE, fg=self.MUTED, font=("Segoe UI", 11), justify="center",
+            bg=self.SURFACE, fg=self.MUTED, font=("Segoe UI Semibold", 11), justify="center",
         )
 
         detail_shell = tk.Frame(diagnostics_tab, bg=self.RULE, bd=0, padx=1, pady=1)
         detail_shell.pack(fill="x", pady=(10, 0))
-        detail_body = tk.Frame(detail_shell, bg="#F7F5EF", padx=12, pady=9)
+        detail_body = tk.Frame(detail_shell, bg=self.DETAIL, padx=12, pady=9)
         detail_body.pack(fill="both")
         self.diagnostic_detail = tk.Label(
             detail_body,
             text="Detalle: seleccione una fila de la tabla.",
-            bg="#F7F5EF",
+            bg=self.DETAIL,
             fg=self.INK,
             font=("Segoe UI", 9),
             justify="left",
@@ -250,7 +291,7 @@ class CompiscriptApp:
         ast_head.pack(fill="x")
         ttk.Label(ast_head, text="Árbol sintáctico abstracto", style="Section.TLabel").pack(side="left")
         self.ast_summary_label = tk.Label(
-            ast_head, text="SIN GENERAR", bg="#E9E5DA", fg=self.MUTED,
+            ast_head, text="SIN GENERAR", bg=self.SOFT, fg=self.MUTED,
             font=("Segoe UI Semibold", 8), padx=9, pady=5,
         )
         self.ast_summary_label.pack(side="right")
@@ -289,18 +330,16 @@ class CompiscriptApp:
             text="El AST aparecerá aquí después del análisis.",
             bg=self.SURFACE,
             fg=self.MUTED,
-            font=("Segoe UI", 11),
+            font=("Segoe UI Semibold", 11),
             justify="center",
         )
         self.ast_empty_message.place(relx=0.5, rely=0.45, anchor="center")
 
-        # pestaña completa "Tabla de símbolos", en el
-        # mismo patrón que la pestaña "Árbol sintáctico" de arriba.
         symbols_head = ttk.Frame(symbols_tab, style="Surface.TFrame")
         symbols_head.pack(fill="x")
         ttk.Label(symbols_head, text="Tabla de símbolos", style="Section.TLabel").pack(side="left")
         self.symbols_summary_label = tk.Label(
-            symbols_head, text="SIN GENERAR", bg="#E9E5DA", fg=self.MUTED,
+            symbols_head, text="SIN GENERAR", bg=self.SOFT, fg=self.MUTED,
             font=("Segoe UI Semibold", 8), padx=9, pady=5,
         )
         self.symbols_summary_label.pack(side="right")
@@ -350,12 +389,13 @@ class CompiscriptApp:
             text="La tabla de símbolos aparecerá aquí después del análisis.",
             bg=self.SURFACE,
             fg=self.MUTED,
-            font=("Segoe UI", 11),
+            font=("Segoe UI Semibold", 11),
             justify="center",
         )
         self.symbols_empty_message.place(relx=0.5, rely=0.45, anchor="center")
 
-        footer = ttk.Frame(self.root, style="App.TFrame", padding=(20, 0, 20, 10))
+        ttk.Separator(self.root, orient="horizontal").pack(fill="x", padx=18)
+        footer = ttk.Frame(self.root, style="App.TFrame", padding=(20, 8, 20, 10))
         footer.pack(fill="x")
         self.position_label = ttk.Label(footer, text="Línea 1, columna 1", style="Status.TLabel")
         self.position_label.pack(side="left")
@@ -363,6 +403,11 @@ class CompiscriptApp:
         self.status_label.pack(side="right")
         self.editor.bind("<KeyRelease>", self._update_cursor_position, add="+")
         self.editor.bind("<ButtonRelease-1>", self._update_cursor_position, add="+")
+
+    def _set_initial_split(self) -> None:
+        width = self.panes.winfo_width()
+        if width > 1:
+            self.panes.sashpos(0, int(width * 0.57))
 
     def _configure_editor_tags(self) -> None:
         self.editor.tag_configure("keyword", foreground=self.BLUE, font=("Cascadia Mono", 10, "bold"))
@@ -376,6 +421,7 @@ class CompiscriptApp:
         self.root.bind("<Control-o>", lambda _: self.open_file())
         self.root.bind("<Control-s>", lambda _: self.save_file())
         self.root.bind("<F5>", lambda _: self.analyze())
+        self.root.bind("<Escape>", lambda _: self.editor.focus_set())
 
     def _sync_scroll(self, first: str, last: str, scrollbar: ttk.Scrollbar) -> None:
         scrollbar.set(first, last)
@@ -461,6 +507,7 @@ class CompiscriptApp:
         self._highlight_source()
         self._set_empty_state("Archivo cargado. Presione F5 para analizar.")
         self.status_label.configure(text=f"{len(source.encode('utf-8')):,} bytes")
+        self.editor.focus_set()
 
     def save_file(self) -> bool:
         if self.current_file is None:
@@ -486,18 +533,17 @@ class CompiscriptApp:
         if not source.strip():
             messagebox.showinfo("Archivo vacío", "Abra un archivo .cps o escriba código antes de analizar.")
             return
+        self.analyze_button.state(["disabled"])
+        self.status_label.configure(text="Analizando…")
         self.root.configure(cursor="watch")
         self.root.update_idletasks()
         try:
             result = self.analyzer.analyze(source)
-            # la tabla de símbolos y el analizador semántico
-            # se construyen sobre el mismo AST ya recuperado por el analizador
-            # léxico/sintáctico; si result.ast es None, ambos devuelven listas
-            # vacías en lugar de fallar.
             symbol_table, scope_diagnostics = build_symbol_table(result.ast)
             type_diagnostics = analyze_semantics(symbol_table, result.ast)
         finally:
             self.root.configure(cursor="")
+            self.analyze_button.state(["!disabled"])
         self.last_result = result
         self.last_symbol_table = symbol_table
         self.last_diagnostics = self._merge_diagnostics(
@@ -521,13 +567,13 @@ class CompiscriptApp:
         self.editor.tag_remove("active_error", "1.0", "end")
         self.empty_message.place_forget()
         self._show_ast(result)
-        self._show_symbol_table(result, self.last_symbol_table)  ############modificado
+        self._show_symbol_table(result, self.last_symbol_table)
 
         diagnostics = self.last_diagnostics
         semantic_count = sum(1 for item in diagnostics if item.kind == "Semántico")
 
         if not diagnostics:
-            self.summary_label.configure(text="SIN ERRORES", bg=self.GREEN_PALE, fg=self.GREEN)
+            self._set_badge(self.summary_label, "SIN ERRORES", "success")
             self.result_detail.configure(
                 text=f"{result.line_count} líneas · {result.token_count} tokens · {result.elapsed_ms:.1f} ms"
             )
@@ -543,7 +589,11 @@ class CompiscriptApp:
             return
 
         total = len(diagnostics)
-        self.summary_label.configure(text=f"{total} {'ERROR' if total == 1 else 'ERRORES'}", bg=self.RED_PALE, fg=self.RED)
+        self._set_badge(
+            self.summary_label,
+            f"{total} {'ERROR' if total == 1 else 'ERRORES'}",
+            "error",
+        )
         self.result_detail.configure(
             text=(
                 f"{result.lexical_count} léxicos · {result.syntactic_count} sintácticos · "
@@ -551,11 +601,12 @@ class CompiscriptApp:
             )
         )
         for index, diagnostic in enumerate(diagnostics):
-            tag = self._diagnostic_tag(diagnostic.kind)  
+            tag = self._diagnostic_tag(diagnostic.kind)
+            tags = (tag, "odd") if index % 2 else (tag,)
             self.results.insert(
                 "", "end", iid=str(index),
                 values=(diagnostic.kind, diagnostic.line, diagnostic.column, diagnostic.symbol, diagnostic.description),
-                tags=(tag,),
+                tags=tags,
             )
             self.editor.tag_add("error_line", f"{diagnostic.line}.0", f"{diagnostic.line}.end")
         first = self.results.get_children()[0]
@@ -570,10 +621,19 @@ class CompiscriptApp:
     def _diagnostic_color(self, kind: str) -> str:
         return {"Léxico": self.RED, "Sintáctico": self.AMBER}.get(kind, self.VIOLET)
 
+    def _set_badge(self, label: tk.Label, text: str, tone: str = "neutral") -> None:
+        colors = {
+            "neutral": (self.SOFT, self.MUTED),
+            "success": (self.GREEN_PALE, self.GREEN),
+            "error": (self.RED_PALE, self.RED),
+        }
+        background, foreground = colors[tone]
+        label.configure(text=text, bg=background, fg=foreground)
+
     def _show_ast(self, result: AnalysisResult) -> None:
         self._clear_ast()
         if result.ast is None:
-            self.ast_summary_label.configure(text="NO DISPONIBLE", bg=self.RED_PALE, fg=self.RED)
+            self._set_badge(self.ast_summary_label, "NO DISPONIBLE", "error")
             self.ast_detail_label.configure(
                 text="La recuperación sintáctica no produjo una estructura navegable."
             )
@@ -586,9 +646,7 @@ class CompiscriptApp:
         visual_root = build_visual_tree(result.ast)
         self._insert_ast_node("", visual_root, depth=0)
         self.ast_empty_message.place_forget()
-        self.ast_summary_label.configure(
-            text=f"{result.ast_node_count} NODOS", bg=self.GREEN_PALE, fg=self.GREEN
-        )
+        self._set_badge(self.ast_summary_label, f"{result.ast_node_count} NODOS", "success")
         self.ast_detail_label.configure(
             text="Seleccione un nodo; doble clic para ir a su ubicación en el código."
         )
@@ -610,7 +668,7 @@ class CompiscriptApp:
         for item in self.ast_tree.get_children():
             self.ast_tree.delete(item)
         self.ast_visual_by_item.clear()
-        self.ast_summary_label.configure(text="SIN GENERAR", bg="#E9E5DA", fg=self.MUTED)
+        self._set_badge(self.ast_summary_label, "SIN GENERAR")
         self.ast_detail_label.configure(text=message or "Analice el archivo para construir el AST.")
         self.ast_empty_message.configure(
             text="El AST aparecerá aquí después del análisis.", fg=self.MUTED
@@ -664,13 +722,10 @@ class CompiscriptApp:
             self._set_ast_open(item, False)
             self.ast_tree.item(item, open=True)
 
-    # bloque completo de la pestaña "Tabla de
-    # símbolos", en el mismo patrón que los métodos _show_ast/_insert_ast_node
-    # de arriba, pero recorriendo la jerarquía de Scope en vez del AST.
     def _show_symbol_table(self, result: AnalysisResult, table: SymbolTable | None) -> None:
         self._clear_symbols()
         if result.ast is None or table is None:
-            self.symbols_summary_label.configure(text="NO DISPONIBLE", bg=self.RED_PALE, fg=self.RED)
+            self._set_badge(self.symbols_summary_label, "NO DISPONIBLE", "error")
             self.symbols_detail_label.configure(
                 text="La recuperación sintáctica no produjo un AST navegable."
             )
@@ -684,7 +739,7 @@ class CompiscriptApp:
         self._insert_scope_node("", table.global_scope, depth=0)
         self.symbols_empty_message.place_forget()
         total = len(table.all_symbols())
-        self.symbols_summary_label.configure(text=f"{total} SÍMBOLOS", bg=self.GREEN_PALE, fg=self.GREEN)
+        self._set_badge(self.symbols_summary_label, f"{total} SÍMBOLOS", "success")
         self.symbols_detail_label.configure(
             text="Seleccione un símbolo; doble clic para ir a su declaración en el código."
         )
@@ -717,7 +772,7 @@ class CompiscriptApp:
             self.symbols_tree.delete(item)
         self.symbol_by_item.clear()
         self.scope_by_item.clear()
-        self.symbols_summary_label.configure(text="SIN GENERAR", bg="#E9E5DA", fg=self.MUTED)
+        self._set_badge(self.symbols_summary_label, "SIN GENERAR")
         self.symbols_detail_label.configure(
             text=message or "Analice el archivo para construir la tabla de símbolos."
         )
@@ -786,8 +841,6 @@ class CompiscriptApp:
             self.symbols_tree.item(item, open=True)
 
     def _show_selected_detail(self, _event=None) -> None:
-        # usa self.last_diagnostics (combinado) en vez
-        # de self.last_result.diagnostics (sólo léxico/sintáctico).
         selected = self.results.selection()
         if not selected or not self.last_diagnostics:
             return
@@ -801,7 +854,6 @@ class CompiscriptApp:
         )
 
     def _go_to_selected(self, _event=None) -> None:
-        # idem, usa self.last_diagnostics.
         selected = self.results.selection()
         if not selected or not self.last_diagnostics:
             return
@@ -818,7 +870,7 @@ class CompiscriptApp:
     def _set_empty_state(self, message: str | None = None) -> None:
         for item in self.results.get_children():
             self.results.delete(item)
-        self.summary_label.configure(text="SIN ANALIZAR", bg="#E9E5DA", fg=self.MUTED)
+        self._set_badge(self.summary_label, "SIN ANALIZAR")
         self.result_detail.configure(text="Los diagnósticos aparecerán ordenados por ubicación.")
         self.diagnostic_detail.configure(text="Detalle: seleccione una fila de la tabla.", fg=self.INK)
         self.empty_message.configure(
@@ -826,7 +878,6 @@ class CompiscriptApp:
         )
         self.empty_message.place(relx=0.5, rely=0.45, anchor="center")
         self._clear_ast(message or "Analice el archivo para construir el AST.")
-        # limpiar también la pestaña de símbolos.
         self._clear_symbols(message or "Analice el archivo para construir la tabla de símbolos.")
 
 
@@ -834,10 +885,13 @@ class CompiscriptApp:
         if self.current_file is None:
             self.file_name_label.configure(text="Ningún archivo abierto")
             self.file_path_label.configure(text="Seleccione un archivo .cps para comenzar")
+            self.root.title("Analizador Compiscript")
             return
         marker = " •" if self.dirty else ""
         self.file_name_label.configure(text=f"{self.current_file.name}{marker}")
-        self.file_path_label.configure(text=f"Carpeta: {self.current_file.parent.name}")
+        self.file_path_label.configure(text=str(self.current_file.parent))
+        dirty_title = " *" if self.dirty else ""
+        self.root.title(f"{self.current_file.name}{dirty_title} — Analizador Compiscript")
 
     def _update_cursor_position(self, _event=None) -> None:
         line, column = self.editor.index("insert").split(".")
