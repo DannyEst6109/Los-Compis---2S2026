@@ -27,7 +27,7 @@ python -m unittest discover -s tests -v
 ```
 
 
-Las pruebas cubren la recuperación léxica y sintáctica heredada, construcción del AST, precedencia de operadores, estructuras de Compiscript, Visitor, visualización, casos de recuperación de errores (incluyendo la aparición explícita de `ErrorExpression` navegable), e integración con entradas válidas e inválidas. `tests/test_symbol_table.py` cubre además la tabla de símbolos: ámbitos anidados y shadowing, declaraciones duplicadas, variables no declaradas, parámetros duplicados, funciones recursivas y con recursión mutua, closures, y registro de clases (atributos, métodos, constructor). `tests/test_semantic_analyzer.py` cubre el analizador semántico — aritmética, lógica, comparaciones, asignaciones, listas, condiciones de control de flujo, argumentos/tipo de retorno de funciones (incluida recursión), atributos/métodos/constructor de clases, código muerto, y que los errores no se dupliquen en cascada.
+Las pruebas cubren la recuperación léxica y sintáctica heredada, construcción del AST, precedencia de operadores, estructuras de Compiscript, Visitor, visualización, casos de recuperación de errores (incluyendo la aparición explícita de `ErrorExpression` navegable), e integración con entradas válidas e inválidas. `tests/test_symbol_table.py` cubre además la tabla de símbolos: ámbitos anidados y shadowing, declaraciones duplicadas, variables no declaradas, parámetros duplicados, funciones recursivas y con recursión mutua, closures, y registro de clases (atributos, métodos, constructor). `tests/test_semantic_analyzer.py` cubre el analizador semántico - aritmética, lógica, comparaciones, asignaciones, listas, condiciones de control de flujo, argumentos/tipo de retorno de funciones (incluida recursión), atributos/métodos/constructor de clases, código muerto, y que los errores no se dupliquen en cascada.
 
 ## Estado actual
 
@@ -37,7 +37,7 @@ Las pruebas cubren la recuperación léxica y sintáctica heredada, construcció
 | AST independiente de ANTLR + recuperación de errores | Completo |
 | Árbol sintáctico con representación visual en el IDE | Completo |
 | Tabla de símbolos, ámbitos, declaraciones, funciones y clases | Completo, con pestaña propia en el IDE (`src/symbol_table.py`, `tests/test_symbol_table.py`) |
-| Analizador semántico: sistema de tipos, control de flujo, listas, reglas generales | Lógica completa y probada (`src/semantic_analyzer.py`, `tests/test_semantic_analyzer.py`) — pendiente sólo correrla contra el parser ANTLR real |
+| Analizador semántico: sistema de tipos, control de flujo, listas, reglas generales | Lógica completa y probada (`src/semantic_analyzer.py`, `tests/test_semantic_analyzer.py`) |
 | Batería de tests globales de reglas semánticas | `tests/test_semantic_analyzer.py` (46 casos) |
 | IDE: documentación de arquitectura y de ejecución | Este README y `docs/ARQUITECTURA.md` |
 
