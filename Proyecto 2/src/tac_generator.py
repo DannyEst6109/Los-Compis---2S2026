@@ -42,8 +42,9 @@ asignaciones (a variables y a elementos de arreglo), literales de arreglo,
 acceso por índice, declaraciones ``let``/``var``/``const``, instrucciones
 de expresión y ``print``.
 
-Los nodos que todavía no tienen traducción (control de flujo, ``&&``,
-``||``, ``?:``, funciones, llamadas, clases y objetos) llegan a
+Control de flujo, ``&&``, ``||`` y ``?:`` se traducen en
+``tac_control_flow.ControlFlowMixin``. Los nodos que todavía no tienen
+traducción (``try/catch``, funciones, llamadas, clases y objetos) llegan a
 ``generic_visit`` y producen ``TACGenerationError``: es preferible fallar
 de forma explícita a emitir TAC incompleto. Para agregarlos basta con
 definir el ``visit_<nodo>`` correspondiente (en esta clase o en un mixin)
@@ -70,6 +71,7 @@ from tac import (
     Var,
 )
 from temporaries import TempAllocator
+from tac_control_flow import ControlFlowMixin
 
 
 class TACGenerationError(Exception):
@@ -122,7 +124,7 @@ def infer_expression_types(table: SymbolTable, program: ast.Program) -> dict[int
 _RESERVED_NAME = re.compile(r"^(t|L)\d+$")
 
 
-class TACGenerator(AstVisitor[Operand | None]):
+class TACGenerator(ControlFlowMixin, AstVisitor[Operand | None]):
     def __init__(self, table: SymbolTable, expression_types: dict[int, Type] | None = None) -> None:
         self.table = table
         self.program = TACProgram()
@@ -131,6 +133,7 @@ class TACGenerator(AstVisitor[Operand | None]):
         self._names: dict[int, str] = {}  # id(Symbol) -> nombre en el TAC
         self._used_names: set[str] = set()
         self._line: int | None = None
+        self._init_control_flow()
 
     def generate(self, program: ast.Program) -> TACProgram:
         self.visit(program)
@@ -282,9 +285,10 @@ class TACGenerator(AstVisitor[Operand | None]):
         return self.compute(op, self.visit(operand_node))
 
     def visit_binary_expression(self, node: ast.BinaryExpression) -> Operand:
+        if node.operator in {"&&", "||"}:
+            return self.generate_logical_value(node)
         op = SOURCE_BINARY_OPS.get(node.operator)
         if op is None:
-            # «&&» y «||» se evalúan en cortocircuito, con saltos.
             return self.generic_visit(node)
         left = self.visit(node.left)
         right = self.visit(node.right)

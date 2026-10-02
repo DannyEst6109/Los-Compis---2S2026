@@ -25,17 +25,17 @@ class AnalyzerTests(unittest.TestCase):
         self.assertGreater(result.token_count, 100)
 
     def test_lexer_recovers_after_multiple_invalid_characters(self) -> None:
-        result = self.analyze_example("errores_lexicos.cps")
+        result = self.analyze_example("errores_lexicos_medio.cps")
         self.assertGreaterEqual(result.lexical_count, 3)
-        self.assertTrue(any(item.line == 6 for item in result.diagnostics))
+        self.assertTrue({41, 42, 47, 69}.issubset({item.line for item in result.diagnostics}))
 
     def test_parser_reports_more_than_first_error(self) -> None:
-        result = self.analyze_example("errores_sintacticos.cps")
+        result = self.analyze_example("errores_sintacticos_medio.cps")
         self.assertGreaterEqual(result.syntactic_count, 4)
         self.assertGreater(len({item.line for item in result.diagnostics}), 2)
 
     def test_diagnostics_are_localized_and_complete(self) -> None:
-        result = self.analyze_example("errores_combinados.cps")
+        result = self.analyze_example("errores_combinados_medio.cps")
         self.assertFalse(result.is_valid)
         for item in result.diagnostics:
             self.assertIn(item.kind, {"Léxico", "Sintáctico"})

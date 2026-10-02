@@ -1,4 +1,10 @@
-# Proyecto 1 - Análisis semántico de Compiscript
+# Proyecto 2 - Generación de código intermedio de Compiscript
+
+La generación de TAC incluye expresiones y control de flujo. El contrato del
+lenguaje intermedio está en [docs/TAC.md](docs/TAC.md); la implementación de
+Persona 2 y sus decisiones están en [docs/CONTROL_FLUJO.md](docs/CONTROL_FLUJO.md).
+La integración de TAC en el IDE, funciones, registros de activación, objetos y
+`try/catch` sigue pendiente. El IDE heredado muestra los análisis, AST y símbolos.
 
 Aplicación de escritorio que integra el lexer y parser de ANTLR del Laboratorio 1 con un árbol sintáctico abstracto (AST) independiente, un Visitor extensible, una representación jerárquica navegable dentro del IDE y una tabla de símbolos con manejo de ámbitos.
 
@@ -40,6 +46,9 @@ Las pruebas cubren la recuperación léxica y sintáctica heredada, construcció
 | Analizador semántico: sistema de tipos, control de flujo, listas, reglas generales | Lógica completa y probada (`src/semantic_analyzer.py`, `tests/test_semantic_analyzer.py`) |
 | Batería de tests globales de reglas semánticas | `tests/test_semantic_analyzer.py` (46 casos) |
 | IDE: documentación de arquitectura y de ejecución | Este README y `docs/ARQUITECTURA.md` |
+| TAC de expresiones y reciclaje de temporales | Implementado y probado; contrato en `docs/TAC.md` |
+| TAC de control de flujo y expresiones con cortocircuito | Implementado y probado; decisiones en `docs/CONTROL_FLUJO.md` |
+| Visualización de TAC, funciones, entornos y objetos | Pendiente de integración de Persona 3 |
 
 ## Estructura
 

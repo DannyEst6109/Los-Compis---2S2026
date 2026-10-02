@@ -307,6 +307,7 @@ class SymbolTableBuilder(AstVisitor[None]):
         self.diagnostics: list[Diagnostic] = []
         self._scope_stack: list[Scope] = [self.table.global_scope]
         self._loop_depth = 0
+        self._switch_depth = 0
         self._function_depth = 0
 
     def build(self, program: ast.Program) -> SymbolTable:
@@ -485,11 +486,16 @@ class SymbolTableBuilder(AstVisitor[None]):
     def _process_function_body(self, node: ast.FunctionDeclaration) -> None:
         self._push(ScopeKind.FUNCTION, node.name)
         self._function_depth += 1
-        for parameter in node.parameters:
-            self.visit_parameter(parameter)
-        self._process_statements(node.body.statements)
-        self._function_depth -= 1
-        self._pop()
+        outer_loop, outer_switch = self._loop_depth, self._switch_depth
+        self._loop_depth = self._switch_depth = 0
+        try:
+            for parameter in node.parameters:
+                self.visit_parameter(parameter)
+            self._process_statements(node.body.statements)
+        finally:
+            self._loop_depth, self._switch_depth = outer_loop, outer_switch
+            self._function_depth -= 1
+            self._pop()
 
     def visit_function_declaration(self, node: ast.FunctionDeclaration) -> None:
         """Punto de entrada cuando una función se visita de forma aislada
@@ -603,8 +609,8 @@ class SymbolTableBuilder(AstVisitor[None]):
         self.visit(node.condition)
 
     def visit_break_statement(self, node: ast.BreakStatement) -> None:
-        if self._loop_depth == 0:
-            self._error(node, "break", "«break» sólo puede usarse dentro de un bucle.")
+        if self._loop_depth == 0 and self._switch_depth == 0:
+            self._error(node, "break", "«break» sólo puede usarse dentro de un bucle o switch.")
 
     def visit_continue_statement(self, node: ast.ContinueStatement) -> None:
         if self._loop_depth == 0:
@@ -635,13 +641,17 @@ class SymbolTableBuilder(AstVisitor[None]):
     def visit_switch_statement(self, node: ast.SwitchStatement) -> None:
         self.visit(node.expression)
         self._push(ScopeKind.BLOCK, f"switch@{node.span.line}:{node.span.column}")
-        for case in node.cases:
-            self.visit(case.value)
-            for statement in case.statements:
+        self._switch_depth += 1
+        try:
+            for case in node.cases:
+                self.visit(case.value)
+                for statement in case.statements:
+                    self.visit(statement)
+            for statement in node.default_statements:
                 self.visit(statement)
-        for statement in node.default_statements:
-            self.visit(statement)
-        self._pop()
+        finally:
+            self._switch_depth -= 1
+            self._pop()
 
     # -- expresiones relacionadas con identificadores --------------------------
     def visit_identifier_expression(self, node: ast.IdentifierExpression) -> None:

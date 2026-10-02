@@ -7,7 +7,9 @@ Este documento define el código intermedio que genera el compilador de Compiscr
 | `src/tac.py` | Operandos, conjunto de instrucciones (`TACOp`), `TACInstruction`, `TACProgram` |
 | `src/temporaries.py` | Algoritmo de asignación y reciclaje de temporales (`TempAllocator`) |
 | `src/tac_generator.py` | Visitor que recorre el AST y emite TAC (`TACGenerator`, `generate_tac`) |
+| `src/tac_control_flow.py` | Condiciones, cortocircuito, ternario, ciclos y switch (`ControlFlowMixin`) |
 | `tests/test_tac.py`, `tests/test_temporaries.py`, `tests/test_tac_expressions.py` | Pruebas |
+| `tests/test_tac_control_flow.py` | Pruebas estáticas de traducción del control de flujo, anidamiento y casos fallidos |
 
 ## 1. Lugar en el compilador
 
@@ -214,6 +216,7 @@ Sin reciclaje, la misma expresión habría necesitado cinco temporales. Con reci
 ### Garantías y detección de errores
 
 - **Propiedad del temporal.** Quien recibe un `Temp` al visitar una expresión es su dueño: debe usarlo exactamente una vez y liberarlo.
+- **Valores persistentes de control.** `foreach` y `switch` pueden leer el mismo temporal varias veces: lo mantienen reservado durante toda su vida útil y lo liberan una sola vez. No deben pasar un operando persistente a `compute`, porque este lo libera. Los resultados booleanos y ternarios se reservan antes de traducir sus ramas.
 - **Balance por instrucción.** `generate_statement` verifica que cada instrucción del programa termine con la misma cantidad de temporales vivos con la que empezó. Si alguna "olvida" liberar un temporal, se lanza `TACGenerationError` en lugar de ir agotando índices en silencio. Se compara contra la cantidad inicial, y no contra cero, para que una construcción pueda mantener vivo un temporal mientras traduce instrucciones internas (por ejemplo, el arreglo que recorre un `foreach`).
 - **Mal uso detectado.** Liberar dos veces un temporal, o uno que nunca se entregó, lanza `TempAllocatorError`.
 - **Estadísticas.** `created` (nombres distintos), `max_live` (máximo de temporales vivos a la vez), `allocations` y `reuses`.
@@ -241,3 +244,13 @@ Para agregar la traducción de una construcción nueva se define su `visit_<nodo
 | `self.variable(node, name)` | Operando `Var` para un identificador, visto desde `node` |
 | `self.generate_statement(s)` / `self.generate_statements(ss)` | Traduce instrucciones verificando el balance de temporales |
 | `self.type_of(expr)` | Tipo (`semantic_analyzer.Type`) inferido para una expresión |
+
+## 9. Control de flujo
+
+La traducción de Persona 2 está implementada en `ControlFlowMixin`, del que
+hereda `TACGenerator`. Usa las mismas operaciones y el mismo asignador de temporales.
+Incluye `if/else`, `while`, `do-while`, `for`, `foreach`, `switch`, `break`,
+`continue`, cortocircuito `&&` / `||` y el ternario `?:`.
+
+Los algoritmos, ejemplos, supuestos y contrato para integrar funciones están
+documentados en [CONTROL_FLUJO.md](CONTROL_FLUJO.md).
