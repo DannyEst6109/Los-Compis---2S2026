@@ -66,11 +66,15 @@ riesgo de ciclos infinitos.
   mismo bloque" (lo que pide literalmente el enunciado: algo después de un
   ``return``/``break``/``continue``), no mediante un análisis de
   alcanzabilidad completo con ramas (p. ej. un `if/else` donde ambas ramas
-  retornan no marca como muerto lo que sigue del `if`). 
+  retornan no marca como muerto lo que sigue del `if`). Se emite un solo
+  diagnóstico por tramo muerto, pero el tramo se sigue analizando para no
+  ocultar otros errores; un salto inválido (``break`` fuera de un ciclo,
+  ``return`` fuera de una función) no marca código muerto.
 """
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
@@ -150,6 +154,10 @@ class SemanticAnalyzer(AstVisitor[Type]):
         self.diagnostics: list[Diagnostic] = []
         self._return_type_stack: list[Type] = []
         self._symbol_types: dict[int, Type] = {}
+        # Ciclos y switch que encierran la instrucción actual (dentro de la
+        # función actual), para saber si un break/continue es un salto válido.
+        self._loop_depth = 0
+        self._breakable_depth = 0
 
     def analyze(self, program: ast.Program) -> list[Diagnostic]:
         self.visit(program)
@@ -295,21 +303,48 @@ class SemanticAnalyzer(AstVisitor[Type]):
             return
         self._error(node, context, f"Se esperaba una expresión de tipo boolean en {context}; se encontró {type_}.")
 
-    # código muerto: secuencias de instrucciones 
+    # código muerto: secuencias de instrucciones
     def _visit_statement_sequence(self, statements: tuple[ast.Statement, ...]) -> None:
+        """Un solo diagnóstico por tramo muerto, pero el tramo se sigue
+        analizando: un error dentro del código muerto también se reporta."""
         terminated = False
+        reported = False
         for statement in statements:
-            if terminated:
+            if terminated and not reported:
                 self._error(
                     statement,
                     self._describe(statement),
                     "Código muerto: esta instrucción nunca se ejecuta porque la anterior "
                     "siempre termina el bloque (return/break/continue).",
                 )
-                break
+                reported = True
             self.visit(statement)
-            if isinstance(statement, self._TERMINATORS):
+            if self._terminates(statement):
                 terminated = True
+
+    def _terminates(self, statement: ast.Statement) -> bool:
+        """Sólo un salto válido termina el bloque. Un break/continue fuera de
+        un ciclo o un return fuera de una función ya los reportó
+        symbol_table.py; marcar lo siguiente como muerto sería un mensaje
+        derivado de ese error."""
+        if isinstance(statement, ast.ReturnStatement):
+            return bool(self._return_type_stack)
+        if isinstance(statement, ast.BreakStatement):
+            return self._breakable_depth > 0
+        if isinstance(statement, ast.ContinueStatement):
+            return self._loop_depth > 0
+        return False
+
+    @contextmanager
+    def _jump_target(self, *, loop: bool):
+        """Cuerpo de un ciclo (loop=True) o de un switch (loop=False)."""
+        self._breakable_depth += 1
+        self._loop_depth += loop
+        try:
+            yield
+        finally:
+            self._breakable_depth -= 1
+            self._loop_depth -= loop
 
     #  estructura 
     def visit_program(self, node: ast.Program) -> None:
@@ -333,8 +368,15 @@ class SemanticAnalyzer(AstVisitor[Type]):
             self.visit_parameter(parameter)
         return_type = self._resolve_return_type(node.return_type)
         self._return_type_stack.append(return_type)
-        self._visit_statement_sequence(node.body.statements)
-        self._return_type_stack.pop()
+        # Un break/continue dentro de la función no puede salir a un ciclo
+        # que la contiene.
+        outer_depths = (self._loop_depth, self._breakable_depth)
+        self._loop_depth = self._breakable_depth = 0
+        try:
+            self._visit_statement_sequence(node.body.statements)
+        finally:
+            self._loop_depth, self._breakable_depth = outer_depths
+            self._return_type_stack.pop()
 
     #  declaraciones con tipo 
     def visit_variable_declaration(self, node: ast.VariableDeclaration) -> None:
@@ -384,10 +426,12 @@ class SemanticAnalyzer(AstVisitor[Type]):
 
     def visit_while_statement(self, node: ast.WhileStatement) -> None:
         self._expect_boolean(node.condition, self.visit(node.condition), "la condición del while")
-        self.visit(node.body)
+        with self._jump_target(loop=True):
+            self.visit(node.body)
 
     def visit_do_while_statement(self, node: ast.DoWhileStatement) -> None:
-        self.visit(node.body)
+        with self._jump_target(loop=True):
+            self.visit(node.body)
         self._expect_boolean(node.condition, self.visit(node.condition), "la condición del do-while")
 
     def visit_for_statement(self, node: ast.ForStatement) -> None:
@@ -399,7 +443,8 @@ class SemanticAnalyzer(AstVisitor[Type]):
             self._expect_boolean(node.condition, self.visit(node.condition), "la condición del for")
         if node.update is not None:
             self.visit(node.update)
-        self.visit(node.body)
+        with self._jump_target(loop=True):
+            self.visit(node.body)
 
     def visit_foreach_statement(self, node: ast.ForeachStatement) -> None:
         iterable_type = self.visit(node.iterable)
@@ -413,19 +458,21 @@ class SemanticAnalyzer(AstVisitor[Type]):
         symbol = self._symbol_for_name(node.body, node.variable)
         if symbol is not None:
             self._symbol_types[id(symbol)] = element_type
-        self.visit(node.body)
+        with self._jump_target(loop=True):
+            self.visit(node.body)
 
     def visit_switch_statement(self, node: ast.SwitchStatement) -> None:
         switch_type = self.visit(node.expression)
-        for case in node.cases:
-            case_type = self.visit(case.value)
-            if not self._comparable(switch_type, case_type):
-                self._error(
-                    case.value, "case",
-                    f"El valor del case es de tipo {case_type} y no es comparable con {switch_type}.",
-                )
-            self._visit_statement_sequence(case.statements)
-        self._visit_statement_sequence(node.default_statements)
+        with self._jump_target(loop=False):
+            for case in node.cases:
+                case_type = self.visit(case.value)
+                if not self._comparable(switch_type, case_type):
+                    self._error(
+                        case.value, "case",
+                        f"El valor del case es de tipo {case_type} y no es comparable con {switch_type}.",
+                    )
+                self._visit_statement_sequence(case.statements)
+            self._visit_statement_sequence(node.default_statements)
 
     def visit_try_catch_statement(self, node: ast.TryCatchStatement) -> None:
         self.visit(node.try_block)

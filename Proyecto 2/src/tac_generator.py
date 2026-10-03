@@ -5,7 +5,7 @@ Es un Visitor más sobre el mismo AST que ya consumen ``symbol_table.py`` y
 mismo ``Program`` (la usa, vía ``node_scopes``, para saber a qué símbolo se
 refiere cada identificador) y produce un ``tac.TACProgram``.
 
-Sólo debe ejecutarse sobre programas **sin** diagnósticos léxicos,
+Sólo debe ejecutarse sobre programas sin diagnósticos léxicos,
 sintácticos ni semánticos: la especificación del lenguaje intermedio asume
 que los tipos ya fueron validados.
 
@@ -34,21 +34,24 @@ Uso típico::
 - Cada instrucción debe terminar con la misma cantidad de temporales vivos
   con la que empezó; ``generate_statement`` lo verifica.
 
-## Alcance actual
+## Alcance
 
-Implementado: literales, variables, agrupación, operadores aritméticos,
-relacionales, de igualdad y unarios, concatenación de ``string``,
-asignaciones (a variables y a elementos de arreglo), literales de arreglo,
-acceso por índice, declaraciones ``let``/``var``/``const``, instrucciones
-de expresión y ``print``.
+Esta clase traduce literales, variables, agrupación, operadores
+aritméticos, relacionales, de igualdad y unarios, concatenación de
+``string``, asignaciones (a variables, elementos de arreglo y atributos),
+literales de arreglo, acceso por índice, declaraciones ``let``/``var``/
+``const``, instrucciones de expresión y ``print``. El resto está en mixins:
 
-Control de flujo, ``&&``, ``||`` y ``?:`` se traducen en
-``tac_control_flow.ControlFlowMixin``. Los nodos que todavía no tienen
-traducción (``try/catch``, funciones, llamadas, clases y objetos) llegan a
-``generic_visit`` y producen ``TACGenerationError``: es preferible fallar
-de forma explícita a emitir TAC incompleto. Para agregarlos basta con
-definir el ``visit_<nodo>`` correspondiente (en esta clase o en un mixin)
-usando ``emit``, ``compute``, ``temps`` y ``variable``.
+- ``tac_control_flow.ControlFlowMixin``: condiciones, ``&&``, ``||``,
+  ``?:``, ciclos, ``switch``, ``break`` y ``continue``.
+- ``tac_functions.FunctionMixin``: funciones, llamadas y ``return``.
+- ``tac_objects.ObjectMixin``: clases, ``new``, atributos, ``this`` y
+  métodos con despacho dinámico.
+- ``tac_exceptions.ExceptionMixin``: ``try/catch``.
+
+Un nodo sin traducción llega a ``generic_visit`` y produce
+``TACGenerationError``: es preferible fallar de forma explícita a emitir
+TAC incompleto.
 """
 
 from __future__ import annotations
@@ -57,12 +60,14 @@ import re
 
 import ast_nodes as ast
 from ast_visitor import AstVisitor
+from memory_layout import assign_memory_layout
 from semantic_analyzer import SemanticAnalyzer, Type, TypeKind
-from symbol_table import Symbol, SymbolTable
+from symbol_table import Scope, Symbol, SymbolTable
 from tac import (
     SOURCE_BINARY_OPS,
     SOURCE_UNARY_OPS,
     Const,
+    Name,
     Operand,
     TACInstruction,
     TACOp,
@@ -72,6 +77,9 @@ from tac import (
 )
 from temporaries import TempAllocator
 from tac_control_flow import ControlFlowMixin
+from tac_exceptions import ExceptionMixin
+from tac_functions import FunctionMixin
+from tac_objects import ObjectMixin
 
 
 class TACGenerationError(Exception):
@@ -106,11 +114,22 @@ class _ExpressionTypeRecorder(SemanticAnalyzer):
         return result
 
 
-def infer_expression_types(table: SymbolTable, program: ast.Program) -> dict[int, Type]:
-    """Mapa ``id(expresión) -> Type`` para el mismo ``Program`` de ``table``."""
+    @property
+    def symbol_types(self) -> dict[int, Type]:
+        """Tipo declarado o inferido de cada variable: ``id(Symbol) -> Type``."""
+        return self._symbol_types
+
+
+def infer_types(table: SymbolTable, program: ast.Program) -> tuple[dict[int, Type], dict[int, Type]]:
+    """Tipos de expresiones (``id(expresión)``) y de símbolos (``id(Symbol)``)."""
     recorder = _ExpressionTypeRecorder(table)
     recorder.analyze(program)
-    return recorder.types
+    return recorder.types, recorder.symbol_types
+
+
+def infer_expression_types(table: SymbolTable, program: ast.Program) -> dict[int, Type]:
+    """Mapa ``id(expresión) -> Type`` para el mismo ``Program`` de ``table``."""
+    return infer_types(table, program)[0]
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +143,7 @@ def infer_expression_types(table: SymbolTable, program: ast.Program) -> dict[int
 _RESERVED_NAME = re.compile(r"^(t|L)\d+$")
 
 
-class TACGenerator(ControlFlowMixin, AstVisitor[Operand | None]):
+class TACGenerator(FunctionMixin, ObjectMixin, ExceptionMixin, ControlFlowMixin, AstVisitor[Operand | None]):
     def __init__(self, table: SymbolTable, expression_types: dict[int, Type] | None = None) -> None:
         self.table = table
         self.program = TACProgram()
@@ -134,10 +153,28 @@ class TACGenerator(ControlFlowMixin, AstVisitor[Operand | None]):
         self._used_names: set[str] = set()
         self._line: int | None = None
         self._init_control_flow()
+        self._init_functions()
+        self._init_exceptions()
 
     def generate(self, program: ast.Program) -> TACProgram:
+        """Traduce ``program``. El resultado tiene primero una sección
+        ``begin_func``/``end_func`` por cada función, método e inicializador
+        y después el código global, que es el punto de entrada."""
+        if not self.table.has_layout:
+            assign_memory_layout(self.table)
+        # Una variable no debe imprimirse igual que una función.
+        self._used_names.update(record.name for record in self.table.activation_records)
         self.visit(program)
+        if self.table.global_record is not None:
+            self.table.global_record.temporaries = self.temps.created
+        self.unit_temps.append(("global", self.temps))
+        self.program = self.assemble_sections(self.program.instructions)
         return self.program
+
+    def _fresh_unit_state(self) -> dict[str, object]:
+        state = super()._fresh_unit_state()
+        state.update(_handler_depth=0, _handler_marks=[])
+        return state
 
     # -- infraestructura ------------------------------------------------------
     def visit(self, node: ast.AstNode) -> Operand | None:
@@ -179,20 +216,27 @@ class TACGenerator(ControlFlowMixin, AstVisitor[Operand | None]):
         return self._types.get(id(node))
 
     # -- nombres de variables --------------------------------------------------
-    def variable(self, node: ast.AstNode, name: str) -> Var:
-        """Operando para el identificador ``name`` tal como se ve desde
-        ``node`` (respeta shadowing gracias a ``node_scopes``)."""
+    def resolve(self, node: ast.AstNode, name: str) -> tuple[Symbol, Scope]:
+        """Símbolo de ``name`` visto desde ``node`` y el ámbito que lo declara
+        (respeta shadowing gracias a ``node_scopes``)."""
         scope = self.table.scope_of(node)
         found = scope.resolve(name) if scope is not None else None
         if found is None:
             raise TACGenerationError(node, f"No se encontró el símbolo «{name}» en la tabla de símbolos.")
-        symbol = found[0]
+        return found
+
+    def variable(self, node: ast.AstNode, name: str) -> Var:
+        """Operando para el identificador ``name`` tal como se ve desde ``node``."""
+        symbol = self.resolve(node, name)[0]
         return Var(self._tac_name(symbol), symbol)
 
     def _tac_name(self, symbol: Symbol) -> str:
         """Nombre único en todo el programa para ``symbol``: el original si
         está libre; si no, ``nombre$1``, ``nombre$2``... (``$`` no puede
-        aparecer en un identificador de Compiscript, así que no choca)."""
+        aparecer en un identificador de Compiscript, así que no choca).
+        Las funciones usan la etiqueta que les asignó la tabla de símbolos."""
+        if symbol.tac_label is not None:
+            return symbol.tac_label
         key = id(symbol)
         cached = self._names.get(key)
         if cached is not None:
@@ -256,8 +300,12 @@ class TACGenerator(ControlFlowMixin, AstVisitor[Operand | None]):
     def visit_literal_expression(self, node: ast.LiteralExpression) -> Const:
         return Const(node.value, node.literal_type)
 
-    def visit_identifier_expression(self, node: ast.IdentifierExpression) -> Var:
-        return self.variable(node, node.name)
+    def visit_identifier_expression(self, node: ast.IdentifierExpression) -> Operand:
+        symbol, owner = self.resolve(node, node.name)
+        if self.is_attribute(symbol, owner):
+            # Atributo nombrado sin «this.» dentro de un método.
+            return self.compute(TACOp.FIELD_LOAD, self.this_operand(node), Name(node.name))
+        return Var(self._tac_name(symbol), symbol)
 
     def visit_grouping_expression(self, node: ast.GroupingExpression) -> Operand:
         # Los paréntesis ya quedaron reflejados en la forma del árbol.
@@ -298,13 +346,27 @@ class TACGenerator(ControlFlowMixin, AstVisitor[Operand | None]):
 
     def _is_string_concat(self, node: ast.BinaryExpression, left: Operand, right: Operand) -> bool:
         node_type = self.type_of(node)
-        if node_type is not None:
+        if node_type is not None and node_type.kind is not TypeKind.UNKNOWN:
             return node_type.kind is TypeKind.STRING
-        return any(isinstance(item, Const) and item.type_name == "string" for item in (left, right))
+        # Sin tipo conocido (p. ej. un parámetro sin anotación): basta con
+        # que un operando sea string para que «+» sea una concatenación.
+        for side, operand in ((node.left, left), (node.right, right)):
+            side_type = self.type_of(side)
+            if side_type is not None and side_type.kind is TypeKind.STRING:
+                return True
+            if isinstance(operand, Const) and operand.type_name == "string":
+                return True
+        return False
 
     # -- expresiones: asignación ------------------------------------------------
     def visit_assignment_expression(self, node: ast.AssignmentExpression) -> Operand:
         target = node.target
+        if isinstance(target, ast.MemberExpression):
+            instance = self.visit(target.object)
+            return self.store_field(instance, target.member, self.visit(node.value))
+        if isinstance(target, ast.IdentifierExpression) and self.is_attribute(*self.resolve(target, target.name)):
+            value = self.visit(node.value)
+            return self.store_field(self.this_operand(target), target.name, value)
         if isinstance(target, ast.IdentifierExpression):
             value = self.visit(node.value)
             variable = self.variable(target, target.name)
@@ -341,8 +403,17 @@ class TACGenerator(ControlFlowMixin, AstVisitor[Operand | None]):
         return self.compute(TACOp.INDEX_LOAD, collection, index)
 
 
+def prepare_generator(table: SymbolTable, program: ast.Program) -> TACGenerator:
+    """Infiere los tipos, completa la tabla con direcciones y registros de
+    activación (``memory_layout``) y devuelve un generador listo."""
+    expression_types, symbol_types = infer_types(table, program)
+    assign_memory_layout(table, symbol_types)
+    return TACGenerator(table, expression_types)
+
+
 def generate_tac(table: SymbolTable, program: ast.Program) -> TACProgram:
     """Punto de integración: recibe la tabla y el MISMO ``Program`` con el
-    que se construyó (igual que ``analyze_semantics``) y devuelve el TAC."""
-    types = infer_expression_types(table, program)
-    return TACGenerator(table, types).generate(program)
+    que se construyó (igual que ``analyze_semantics``) y devuelve el TAC.
+    Como efecto, la tabla queda con las direcciones y registros de
+    activación de cada símbolo."""
+    return prepare_generator(table, program).generate(program)

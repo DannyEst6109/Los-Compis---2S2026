@@ -176,6 +176,12 @@ class TACOp(Enum):
     NEW_OBJECT = "new"
     FIELD_LOAD = "field_load"
     FIELD_STORE = "field_store"
+    METHOD_LOAD = "method"  # dirección de un método según la vtable del objeto
+
+    # Excepciones (try/catch).
+    TRY_BEGIN = "try_begin"
+    TRY_END = "try_end"
+    GET_EXCEPTION = "exception"
 
     # Salida.
     PRINT = "print"
@@ -237,6 +243,10 @@ _FORMATS: dict[TACOp, str] = {
     TACOp.NEW_OBJECT: "{r} = new {a}",
     TACOp.FIELD_LOAD: "{r} = {a}.{b}",
     TACOp.FIELD_STORE: "{r}.{a} = {b}",
+    TACOp.METHOD_LOAD: "{r} = method {a}.{b}",
+    TACOp.TRY_BEGIN: "try_begin {r}",
+    TACOp.TRY_END: "try_end",
+    TACOp.GET_EXCEPTION: "{r} = exception",
     TACOp.PRINT: "print {a}",
 }
 
@@ -260,6 +270,10 @@ _REQUIRED: dict[TACOp, str] = {
     TACOp.NEW_OBJECT: "ra",
     TACOp.FIELD_LOAD: "rab",
     TACOp.FIELD_STORE: "rab",
+    TACOp.METHOD_LOAD: "rab",
+    TACOp.TRY_BEGIN: "r",
+    TACOp.TRY_END: "",
+    TACOp.GET_EXCEPTION: "r",
     TACOp.PRINT: "a",
     **{op: "rab" for op in BINARY_OPS},
     **{op: "ra" for op in UNARY_OPS},
@@ -348,11 +362,21 @@ class TACProgram:
 
     def render(self) -> str:
         """Texto final del programa: etiquetas y límites de función al
-        margen, el resto con sangría."""
-        return "\n".join(
-            (self.INDENT if instruction.indented else "") + str(instruction)
-            for instruction in self.instructions
-        )
+        margen, el resto con sangría. Una línea en blanco separa cada
+        función de lo que viene después."""
+        return "\n".join(text for text, _instruction in self.rendered_lines())
+
+    def rendered_lines(self) -> list[tuple[str, TACInstruction | None]]:
+        """Líneas de ``render`` junto con la instrucción que imprime cada
+        una (``None`` en las líneas en blanco). El IDE lo usa para saltar
+        de una línea del TAC a su línea de código fuente."""
+        lines: list[tuple[str, TACInstruction | None]] = []
+        last = len(self.instructions) - 1
+        for position, instruction in enumerate(self.instructions):
+            lines.append(((self.INDENT if instruction.indented else "") + str(instruction), instruction))
+            if instruction.op is TACOp.END_FUNC and position < last:
+                lines.append(("", None))
+        return lines
 
     def __str__(self) -> str:
         return self.render()

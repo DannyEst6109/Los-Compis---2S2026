@@ -140,7 +140,7 @@ Responsabilidades:
 - Funciones: cantidad y tipo de argumentos (posicional) contra `Symbol.parameters`, tipo de retorno contra `Symbol.return_type`/lo declarado en el `FunctionDeclaration` que se está visitando, recursión (se resuelve gratis: una llamada recursiva es sólo una llamada a un símbolo que ya tiene su firma completa gracias al hoisting de `symbol_table.py`).
 - Clases y objetos: existencia de atributos/métodos accedidos con `.` (vía `SymbolTable.class_members`, que ya incluye herencia), validación de argumentos del constructor en `new`, tipo de `this` dentro de un método.
 - Listas: tipo de los elementos de un literal de lista, tipo del índice (`integer`), que sólo se pueda indexar algo de tipo lista.
-- Generales: código muerto (instrucción después de un `return`/`break`/`continue` incondicional dentro del mismo bloque — un solo diagnóstico por tramo muerto, sin visitar lo que sigue), expresiones sin sentido semántico (p. ej. usar una función como operando aritmético, que cae naturalmente en la validación de tipos de operadores).
+- Generales: código muerto (instrucción después de un `return`/`break`/`continue` incondicional dentro del mismo bloque — un solo diagnóstico por tramo muerto, pero el tramo se sigue analizando para no ocultar otros errores; un `break`/`continue` fuera de un ciclo o un `return` fuera de una función no marcan código muerto, porque ese error ya se reportó), expresiones sin sentido semántico (p. ej. usar una función como operando aritmético, que cae naturalmente en la validación de tipos de operadores).
 - Manejo de errores: un único recorrido descendente sobre un árbol finito (no hay riesgo de ciclos infinitos); cada nodo se tipa incluso tras un error (como `ERROR`/`UNKNOWN`) para que el resto del análisis continúe y no se repitan diagnósticos derivados de uno anterior.
 
 Desviaciones deliberadas (documentadas también como docstring del módulo): no existe el tipo `float` porque la gramática no lo define (sólo aplica a `+` la variante de concatenación de `string`, que el propio lenguaje usa); `switch` no exige condición booleana (se valida que cada `case` sea comparable con el tipo de la expresión); el código muerto se detecta a nivel de instrucción-siguiente-en-el-mismo-bloque, no con un análisis de alcanzabilidad completo con ramas.
@@ -155,15 +155,27 @@ table, scope_diagnostics = build_symbol_table(result.ast)
 type_diagnostics = analyze_semantics(table, result.ast)  # mismo result.ast
 ```
 
+### Generación de código intermedio (Proyecto 2)
+
+Después del análisis semántico, y sólo si no hubo ningún diagnóstico,
+`compiler.compile_source` completa la tabla de símbolos con direcciones y
+registros de activación (`memory_layout.py`) y ejecuta `TACGenerator`, otro
+Visitor sobre el mismo AST. El diseño está en [TAC.md](TAC.md),
+[CONTROL_FLUJO.md](CONTROL_FLUJO.md) y
+[FUNCIONES_ENTORNOS.md](FUNCIONES_ENTORNOS.md), que incluye el diagrama
+completo del pipeline.
+
 ### `ui.py`
 
-Mantiene el editor y la tabla de diagnósticos del Laboratorio 1. El inspector derecho tiene tres pestañas:
+Mantiene el editor y la tabla de diagnósticos del Laboratorio 1. El inspector derecho tiene cinco pestañas:
 
-- **Diagnósticos:** léxicos, sintácticos y semánticos combinados y ordenados por ubicación, con color distinto por tipo.
-- **Árbol sintáctico:** jerarquía del AST, resumen, ubicación y controles para expandir o contraer.
-- **Tabla de símbolos:** jerarquía real de `Scope` (global → función/bloque/clase → símbolos), con salto a la declaración en el editor.
+- **Diagnósticos:** léxicos, sintácticos, semánticos y de generación combinados y ordenados por ubicación, con color distinto por tipo.
+- **Código intermedio:** el TAC generado, con resaltado; un clic en una instrucción resalta su línea de origen.
+- **AST:** jerarquía del AST, resumen, ubicación y controles para expandir o contraer.
+- **Símbolos:** jerarquía real de `Scope` (global → función/bloque/clase → símbolos), con dirección y tamaño de cada símbolo y salto a la declaración en el editor.
+- **Entornos:** área global, registros de activación y distribución de cada clase con su vtable.
 
-Un doble clic o la tecla `Enter` sobre un nodo o símbolo selecciona su intervalo en el editor. `analyze()` llama en secuencia a `CompiscriptAnalyzer.analyze`, `build_symbol_table` y `analyze_semantics`, y combina las tres listas de diagnósticos.
+Un doble clic o la tecla `Enter` sobre un nodo o símbolo selecciona su intervalo en el editor. `analyze()` llama a `compiler.compile_source`, que ejecuta todas las fases y combina sus diagnósticos.
 
 ## Recuperación de errores
 
@@ -185,4 +197,4 @@ Para ejecutar toda la batería:
 python -m unittest discover -s tests -v
 ```
 
-Las pruebas deben ejecutarse desde la carpeta `Proyecto 1`.
+Las pruebas deben ejecutarse desde la carpeta `Proyecto 2`.

@@ -457,6 +457,52 @@ class DeadCodeTests(unittest.TestCase):
         _, diags = analyze(prog)
         self.assertEqual(len(diags), 1)
 
+    def test_errors_inside_dead_code_are_still_reported(self):
+        # El tramo muerto se reporta una vez, pero se sigue analizando: un
+        # error de tipos dentro de él no debe quedar oculto.
+        f = func(
+            "foo",
+            body=[
+                return_stmt(),
+                print_stmt(lit(1)),
+                if_stmt(lit(1), block(print_stmt(lit(2)))),
+            ],
+        )
+        _, diags = analyze(program(f))
+        self.assertEqual(len(diags), 2)
+        self.assertIn("muerto", diags[0].description.lower())
+        self.assertIn("boolean", diags[1].description)
+
+    def test_invalid_jump_does_not_mark_dead_code(self):
+        # break fuera de un ciclo y return fuera de una función ya son
+        # errores de symbol_table.py; lo que sigue se analiza sin un
+        # diagnóstico derivado de "código muerto".
+        for jump in (break_stmt(), ast.ContinueStatement(span=SPAN), return_stmt()):
+            with self.subTest(jump=type(jump).__name__):
+                prog = program(jump, if_stmt(lit(1), block(print_stmt(lit(1)))))
+                _, diags = analyze(prog)
+                self.assertEqual(len(diags), 1)
+                self.assertNotIn("muerto", diags[0].description.lower())
+
+    def test_break_inside_function_does_not_see_outer_loop(self):
+        # El break del cuerpo de la función es inválido aunque la función
+        # esté declarada dentro de un ciclo: no termina el bloque.
+        f = func("foo", body=[break_stmt(), print_stmt(lit(1))])
+        prog = program(while_stmt(lit(True, "boolean"), block(f)))
+        _, diags = analyze(prog)
+        self.assertEqual(diags, [])
+
+    def test_break_inside_switch_case_terminates_the_case(self):
+        switch = ast.SwitchStatement(
+            span=SPAN,
+            expression=lit(1),
+            cases=(ast.SwitchCase(span=SPAN, value=lit(1), statements=(break_stmt(), print_stmt(lit(1)))),),
+            default_statements=(),
+        )
+        _, diags = analyze(program(switch))
+        self.assertEqual(len(diags), 1)
+        self.assertIn("muerto", diags[0].description.lower())
+
 
 class ErrorCascadeTests(unittest.TestCase):
     def test_undeclared_variable_does_not_produce_extra_arithmetic_error(self):

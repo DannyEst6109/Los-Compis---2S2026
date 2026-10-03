@@ -11,6 +11,11 @@ consume ``ast_visualization``) y construye:
   identificadores duplicados, variables no declaradas, parámetros
   duplicados, reasignación de constantes, uso indebido de ``break``,
   ``continue``, ``return`` y ``this``.
+* (Proyecto 2) El modelo de los entornos de ejecución: clase de
+  almacenamiento, dirección y tamaño de cada símbolo, registros de
+  activación de funciones y distribución en memoria de las clases. Estos
+  campos los completa ``memory_layout.assign_memory_layout`` antes de
+  generar el código intermedio.
 
 Este componente es intencionalmente independiente de ANTLR y del
 analizador léxico/sintáctico (``analyzer.py``): sólo depende de
@@ -94,13 +99,147 @@ class ParameterInfo:
     type_name: str | None
 
 
+# Entornos de ejecución (registros de activación y distribución de objetos)
+# Estas estructuras no las llena ``SymbolTableBuilder`` sino
+# ``memory_layout.assign_memory_layout``, que se ejecuta después del análisis
+# semántico (necesita el tipo inferido de las variables sin anotación para
+# conocer su tamaño). El diseño completo está en ``docs/FUNCIONES_ENTORNOS.md``.
+
+
+WORD_SIZE = 4
+
+
+class StorageKind(Enum):
+    """Dónde vive el valor de un símbolo en tiempo de ejecución."""
+
+    GLOBAL = "global"  # área estática: dirección fija «global+k»
+    PARAMETER = "parámetro"  # registro de activación: «fp+k»
+    LOCAL = "local"  # registro de activación: «fp+k»
+    FIELD = "atributo"  # dentro de cada instancia: «obj+k»
+
+
+@dataclass(frozen=True, slots=True)
+class FrameSlot:
+    """Una casilla de un registro de activación o de una instancia."""
+
+    name: str
+    role: str
+    offset: int
+    size: int
+    type_name: str | None = None
+    symbol: Optional["Symbol"] = field(default=None, compare=False, repr=False)
+
+
+def align(offset: int, size: int) -> int:
+    """Primer desplazamiento >= ``offset`` alineado al tamaño del dato
+    (como máximo a una palabra)."""
+    boundary = min(max(size, 1), WORD_SIZE)
+    return (offset + boundary - 1) // boundary * boundary
+
+
+@dataclass(slots=True)
+class _SlotArea:
+    """Secuencia de casillas con desplazamientos crecientes y alineados."""
+
+    slots: list[FrameSlot] = field(default_factory=list)
+    data_size: int = 0
+
+    def allocate(
+        self,
+        name: str,
+        role: str,
+        size: int,
+        type_name: str | None = None,
+        symbol: Optional["Symbol"] = None,
+    ) -> FrameSlot:
+        offset = align(self.data_size, size)
+        slot = FrameSlot(name, role, offset, size, type_name, symbol)
+        self.slots.append(slot)
+        self.data_size = offset + size
+        return slot
+
+
+@dataclass(slots=True)
+class ActivationRecord(_SlotArea):
+    """Registro de activación de una función, método o del código global.
+
+    Distribución (desplazamientos desde el inicio del registro, ``fp``)::
+
+        +0   dirección de retorno
+        +4   enlace de control  (fp del llamador)
+        +8   enlace de acceso   (fp del registro que la contiene léxicamente)
+        +12  this               (sólo métodos, constructores e inicializadores)
+        ...  parámetros, en orden
+        ...  variables locales (incluidas las de bloques internos)
+        ...  temporales t1..tn (una palabra cada uno)
+
+    El registro ``global`` no tiene encabezado: describe el área estática de
+    variables globales y los temporales del código global.
+    """
+
+    name: str = ""
+    kind: str = "función"
+    level: int = 0
+    parent: str | None = None
+    temporaries: int = 0
+
+    @property
+    def temporaries_offset(self) -> int:
+        return align(self.data_size, WORD_SIZE)
+
+    @property
+    def size(self) -> int:
+        return self.temporaries_offset + self.temporaries * WORD_SIZE
+
+    def temporary_slots(self) -> list[FrameSlot]:
+        start = self.temporaries_offset
+        return [
+            FrameSlot(f"t{index}", "temporal", start + (index - 1) * WORD_SIZE, WORD_SIZE)
+            for index in range(1, self.temporaries + 1)
+        ]
+
+    def all_slots(self) -> list[FrameSlot]:
+        return [*self.slots, *self.temporary_slots()]
+
+    def slot(self, name: str) -> FrameSlot | None:
+        return next((slot for slot in self.all_slots() if slot.name == name), None)
+
+
+@dataclass(slots=True)
+class ClassLayout(_SlotArea):
+    """Distribución en memoria de las instancias de una clase.
+
+    El desplazamiento 0 guarda el puntero a la tabla de métodos virtuales
+    (vtable). Los atributos heredados conservan el desplazamiento que tienen
+    en la superclase, así una instancia de la subclase puede usarse donde se
+    espera la superclase. ``vtable`` lista ``(método, etiqueta TAC)``: una
+    redefinición reemplaza la entrada heredada en la misma posición.
+    """
+
+    name: str = ""
+    superclass: str | None = None
+    vtable: list[tuple[str, str]] = field(default_factory=list)
+    init_record: ActivationRecord | None = None
+
+    @property
+    def size(self) -> int:
+        return align(self.data_size, WORD_SIZE)
+
+    def field_offset(self, name: str) -> int | None:
+        return next((slot.offset for slot in self.slots if slot.name == name), None)
+
+    def method_index(self, name: str) -> int | None:
+        return next((index for index, (method, _) in enumerate(self.vtable) if method == name), None)
+
+
 @dataclass(slots=True)
 class Symbol:
     """Entrada de la tabla de símbolos.
 
     Los campos ``parameters``/``return_type``/``captured_names`` sólo
     aplican a funciones y métodos; ``superclass``/``attributes``/
-    ``methods``/``constructor`` sólo aplican a clases.
+    ``methods``/``constructor`` sólo aplican a clases. Los campos de
+    "generación de código" los completa ``memory_layout``.
     """
 
     name: str
@@ -121,6 +260,31 @@ class Symbol:
     attributes: dict[str, "Symbol"] = field(default_factory=dict)
     methods: dict[str, "Symbol"] = field(default_factory=dict)
     constructor: Optional["Symbol"] = None
+
+    # Generación de código: variables, constantes, parámetros y atributos.
+    storage: StorageKind | None = None
+    offset: int | None = None
+    size: int = 0
+    runtime_type: str | None = None  # tipo declarado o, si falta, inferido
+    owner: str | None = None  # registro de activación o clase que lo aloja
+
+    # Generación de código: funciones, métodos y clases.
+    tac_label: str | None = None
+    activation_record: ActivationRecord | None = None
+    class_layout: ClassLayout | None = None
+
+    @property
+    def address(self) -> str | None:
+        """Dirección simbólica: ``global+k``, ``fp+k`` u ``obj+k``."""
+        if self.storage is None or self.offset is None:
+            return None
+        base = {
+            StorageKind.GLOBAL: "global",
+            StorageKind.PARAMETER: "fp",
+            StorageKind.LOCAL: "fp",
+            StorageKind.FIELD: "obj",
+        }[self.storage]
+        return f"{base}+{self.offset}"
 
 
 class DuplicateSymbolError(Exception):
@@ -204,6 +368,20 @@ class SymbolTable:
         # construyó esta tabla (ver build_symbol_table); no reutilizar esta
         # tabla contra un AST distinto.
         self.node_scopes: dict[int, "Scope"] = {}
+        # Entornos de ejecución; los llena memory_layout.assign_memory_layout.
+        self.global_record: ActivationRecord | None = None
+        self.activation_records: list[ActivationRecord] = []
+        self.class_layouts: dict[str, ClassLayout] = {}
+
+    @property
+    def has_layout(self) -> bool:
+        return self.global_record is not None
+
+    def record(self, name: str) -> ActivationRecord | None:
+        """Registro de activación por su etiqueta TAC (``global`` incluido)."""
+        if self.global_record is not None and name == self.global_record.name:
+            return self.global_record
+        return next((record for record in self.activation_records if record.name == name), None)
 
     def insert(self, scope: Scope, symbol: Symbol) -> bool:
         """Inserta un símbolo en ``scope``. Devuelve ``False`` (sin lanzar
@@ -269,15 +447,17 @@ class SymbolTable:
     def render(self) -> str:
         """Representación tabular simple (para depuración o para una
         pestaña de "Tabla de símbolos" en el IDE)."""
-        rows = [("Nombre", "Tipo", "Categoría", "Ámbito", "Inicializada")]
+        rows = [("Nombre", "Tipo", "Categoría", "Ámbito", "Inicializada", "Dirección", "Tamaño")]
         for symbol in self.all_symbols():
             rows.append(
                 (
                     symbol.name,
-                    symbol.type_name or "-",
+                    symbol.type_name or symbol.runtime_type or "-",
                     symbol.category.value,
                     symbol.scope_name,
                     "sí" if symbol.initialized else "no",
+                    symbol.address or "-",
+                    str(symbol.size) if symbol.size else "-",
                 )
             )
         widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
@@ -625,10 +805,15 @@ class SymbolTableBuilder(AstVisitor[None]):
     def visit_try_catch_statement(self, node: ast.TryCatchStatement) -> None:
         self.visit(node.try_block)
         self._push(ScopeKind.BLOCK, f"catch@{node.span.line}:{node.span.column}")
+        # El bloque catch no pasa por self.visit(); se registra para que el
+        # generador de TAC pueda resolver la variable del error desde él.
+        self._record_scope(node.catch_block)
         self._declare(
             Symbol(
                 name=node.error_name,
                 category=SymbolCategory.VARIABLE,
+                # El valor atrapado es el mensaje del error de ejecución.
+                type_name="string",
                 initialized=True,
                 line=node.span.line,
                 column=node.span.column,

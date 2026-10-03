@@ -181,7 +181,4 @@ expresiones. Los temporales de cada función deben pertenecer a su entorno de
 activación, especialmente al implementar recursión. No reiniciar el contador
 de etiquetas dentro del mismo programa.
 
-Pendientes del proyecto completo: funciones y llamadas, registros de activación
-y direcciones, objetos y herencia, visualización de TAC en el IDE y asignar
-la implementación de `try/catch`. Los ejemplos de control de flujo se pueden
-usar para comprobar que esas integraciones conservan esta parte.
+Funciones, llamadas, registros de activación, objetos, herencia, `try/catch` y la visualización del TAC en el IDE ya están implementados. Cada cuerpo de función se traduce con `_control_stack` vacío y se restaura al salir, como pide esta sección. Ver [FUNCIONES_ENTORNOS.md](FUNCIONES_ENTORNOS.md).

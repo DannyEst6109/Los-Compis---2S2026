@@ -10,6 +10,13 @@ Este documento define el código intermedio que genera el compilador de Compiscr
 | `src/tac_control_flow.py` | Condiciones, cortocircuito, ternario, ciclos y switch (`ControlFlowMixin`) |
 | `tests/test_tac.py`, `tests/test_temporaries.py`, `tests/test_tac_expressions.py` | Pruebas |
 | `tests/test_tac_control_flow.py` | Pruebas estáticas de traducción del control de flujo, anidamiento y casos fallidos |
+| `src/tac_functions.py`, `src/tac_objects.py`, `src/tac_exceptions.py` | Funciones y llamadas, clases y objetos, `try/catch` (sección 10) |
+| `src/memory_layout.py` | Direcciones y registros de activación en la tabla de símbolos |
+| `src/compiler.py` | Pipeline completo usado por el IDE (`compile_source`) |
+| `tests/test_tac_functions.py`, `tests/test_tac_objects.py`, `tests/test_tac_try_catch.py`, `tests/test_memory_layout.py`, `tests/test_compiler.py` | Pruebas de la sección 10 e integración |
+
+El diseño de funciones, entornos de ejecución, objetos y excepciones se
+detalla en [FUNCIONES_ENTORNOS.md](FUNCIONES_ENTORNOS.md).
 
 ## 1. Lugar en el compilador
 
@@ -100,7 +107,7 @@ En estas instrucciones la etiqueta destino va en `result` y la condición en `ar
 | `BEGIN_FUNC` | `begin_func f` o `begin_func f, n` | Inicio del cuerpo de la función `f`. `n` es opcional (por ejemplo, el tamaño de su registro de activación) |
 | `END_FUNC` | `end_func f` | Fin del cuerpo de `f` |
 | `PARAM` | `param x` | Apila un argumento para la próxima llamada |
-| `CALL` | `x = call f, n` o `call f, n` | Llama a `f` con los últimos `n` argumentos apilados. Con destino, guarda el valor de retorno |
+| `CALL` | `x = call f, n` o `call f, n` | Llama a `f` con los últimos `n` argumentos apilados. Con destino, guarda el valor de retorno. `f` es el nombre de una función o un temporal con la dirección de un método (obtenida con `method`) |
 | `RETURN` | `return x` o `return` | Regresa de la función actual, con o sin valor |
 
 ### Arreglos
@@ -116,10 +123,19 @@ En estas instrucciones la etiqueta destino va en `result` y la condición en `ar
 
 | Operación | Forma | Significado |
 | --- | --- | --- |
-| `NEW_OBJECT` | `x = new C` | Crea una instancia de la clase `C` (sin llamar al constructor) |
+| `NEW_OBJECT` | `x = new C` | Crea una instancia de la clase `C` y guarda en ella el puntero a la vtable de `C` (sin llamar al constructor) |
 | `FIELD_LOAD` | `x = y.f` | Lee el atributo `f` de `y` |
 | `FIELD_STORE` | `x.f = y` | Escribe `y` en el atributo `f` de `x` |
+| `METHOD_LOAD` | `x = method y.m` | Dirección de la implementación de `m` según la vtable del objeto `y` (despacho dinámico) |
 | `PRINT` | `print x` | Imprime `x` |
+
+### Excepciones
+
+| Operación | Forma | Significado |
+| --- | --- | --- |
+| `TRY_BEGIN` | `try_begin L1` | Instala un manejador de errores que salta a `L1` |
+| `TRY_END` | `try_end` | Retira el manejador instalado más recientemente |
+| `GET_EXCEPTION` | `x = exception` | Copia en `x` el mensaje del error atrapado (sólo al inicio de un manejador) |
 
 ## 5. Traducción de expresiones
 
@@ -254,3 +270,51 @@ Incluye `if/else`, `while`, `do-while`, `for`, `foreach`, `switch`, `break`,
 
 Los algoritmos, ejemplos, supuestos y contrato para integrar funciones están
 documentados en [CONTROL_FLUJO.md](CONTROL_FLUJO.md).
+
+## 10. Funciones, objetos y excepciones
+
+La traducción de Persona 3 está en `FunctionMixin`, `ObjectMixin` y
+`ExceptionMixin`, que también hereda `TACGenerator`. El diseño completo
+(registros de activación, direcciones, convención de llamada, vtables y
+manejadores) está en [FUNCIONES_ENTORNOS.md](FUNCIONES_ENTORNOS.md). Lo
+esencial para leer el TAC:
+
+- **Estructura del programa.** Primero aparece una sección
+  `begin_func`/`end_func` por cada función, método y constructor (y por cada
+  inicializador de atributos `Clase.$init`), en orden de declaración; las
+  funciones anidadas van como secciones propias, después de la que las
+  contiene. Después viene el código global, que es el punto de entrada.
+  Una sección sólo se ejecuta mediante `call`; llegar a `end_func` equivale
+  a `return`.
+- **`begin_func f, n`**: `n` es el tamaño en bytes del registro de
+  activación de `f` (encabezado, `this`, parámetros, locales y temporales).
+- **Llamadas.** Se evalúan todos los argumentos de izquierda a derecha y
+  luego se emiten los `param` seguidos, justo antes de `call`. Un método
+  recibe el objeto como primer parámetro (`this`).
+- **Temporales por función.** Cada función tiene su propio asignador: sus
+  temporales empiezan en `t1` y viven en su registro de activación, por lo
+  que una llamada (incluso recursiva) no altera los temporales vivos del
+  llamador.
+- **Nombres.** Las funciones usan su etiqueta de la tabla de símbolos
+  (`factorial`, `Perro.hablar`, `ayuda$1` si dos funciones anidadas se
+  llaman igual). `this` es el parámetro implícito de los métodos.
+
+```text
+function factorial(n: integer): integer {      begin_func factorial, 20
+  if (n <= 1) { return 1; }                        t1 = n <= 1
+  return n * factorial(n - 1);                     if t1 goto L1
+}                                                  goto L2
+print(factorial(5));                           L1:
+                                                   return 1
+                                               L2:
+                                                   t1 = n - 1
+                                                   param t1
+                                                   t1 = call factorial, 1
+                                                   t1 = n * t1
+                                                   return t1
+                                               end_func factorial
+
+                                                   param 5
+                                                   t1 = call factorial, 1
+                                                   print t1
+```

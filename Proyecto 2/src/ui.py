@@ -1,4 +1,5 @@
-"""Interfaz de escritorio para analizar y explorar archivos Compiscript."""
+"""IDE de escritorio para escribir, analizar y compilar archivos Compiscript
+a código intermedio (TAC)."""
 
 from __future__ import annotations
 
@@ -9,8 +10,18 @@ from tkinter import filedialog, messagebox, ttk
 
 from analyzer import AnalysisResult, CompiscriptAnalyzer, Diagnostic
 from ast_visualization import VisualAstNode, build_visual_tree
-from symbol_table import Scope, ScopeKind, Symbol, SymbolCategory, SymbolTable, build_symbol_table
-from semantic_analyzer import analyze_semantics
+from compiler import GENERATION_KIND, CompilationResult, compile_source
+from symbol_table import (
+    ActivationRecord,
+    ClassLayout,
+    FrameSlot,
+    Scope,
+    ScopeKind,
+    Symbol,
+    SymbolCategory,
+    SymbolTable,
+)
+from tac import TACInstruction
 
 
 class CompiscriptApp:
@@ -37,6 +48,10 @@ class CompiscriptApp:
         "switch", "case", "default", "new", "this", "null", "true", "false", "boolean",
         "integer", "string",
     }
+    TAC_KEYWORDS = (
+        "goto", "ifFalse", "if", "call", "param", "return", "new_array", "new", "len", "concat",
+        "minus", "not", "method", "print", "try_begin", "try_end", "exception",
+    )
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
@@ -44,12 +59,15 @@ class CompiscriptApp:
         self.current_file: Path | None = None
         self.dirty = False
         self.last_result: AnalysisResult | None = None
+        self.last_compilation: CompilationResult | None = None
         self._highlight_job: str | None = None
         self.ast_visual_by_item: dict[str, VisualAstNode] = {}
         self.last_symbol_table: SymbolTable | None = None
         self.last_diagnostics: list[Diagnostic] = []
         self.symbol_by_item: dict[str, Symbol] = {}
         self.scope_by_item: dict[str, Scope] = {}
+        self.tac_line_instructions: list[TACInstruction | None] = []
+        self.environment_by_item: dict[str, object] = {}
 
         self._configure_window()
         self._configure_styles()
@@ -58,8 +76,8 @@ class CompiscriptApp:
         self._set_empty_state()
 
     def _configure_window(self) -> None:
-        self.root.title("Analizador Compiscript")
-        self.root.geometry("1280x780")
+        self.root.title("Compilador Compiscript")
+        self.root.geometry("1320x800")
         self.root.minsize(1040, 650)
         self.root.configure(bg=self.PAPER)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -132,10 +150,10 @@ class CompiscriptApp:
 
         title_block = ttk.Frame(header, style="Header.TFrame")
         title_block.pack(side="left")
-        ttk.Label(title_block, text="Analizador Compiscript", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(title_block, text="Compilador Compiscript", style="Title.TLabel").pack(anchor="w")
         ttk.Label(
             title_block,
-            text="Análisis léxico, sintáctico y semántico · AST · símbolos",
+            text="Análisis léxico, sintáctico y semántico · código intermedio (TAC) · entornos de ejecución",
             style="Subtitle.TLabel",
         ).pack(anchor="w")
 
@@ -150,7 +168,7 @@ class CompiscriptApp:
         )
         self.save_button.grid(row=0, column=1, padx=(0, 8))
         self.analyze_button = ttk.Button(
-            actions, text="Analizar  F5", style="Primary.TButton", command=self.analyze, takefocus=True
+            actions, text="Compilar  F5", style="Primary.TButton", command=self.analyze, takefocus=True
         )
         self.analyze_button.grid(row=0, column=2)
 
@@ -209,11 +227,18 @@ class CompiscriptApp:
         self.inspector_tabs = ttk.Notebook(results_panel, takefocus=True)
         self.inspector_tabs.pack(fill="both", expand=True)
         diagnostics_tab = ttk.Frame(self.inspector_tabs, style="Surface.TFrame", padding=(2, 4))
+        self.tac_tab = ttk.Frame(self.inspector_tabs, style="Surface.TFrame", padding=(2, 4))
         ast_tab = ttk.Frame(self.inspector_tabs, style="Surface.TFrame", padding=(2, 4))
         symbols_tab = ttk.Frame(self.inspector_tabs, style="Surface.TFrame", padding=(2, 4))
+        environments_tab = ttk.Frame(self.inspector_tabs, style="Surface.TFrame", padding=(2, 4))
+        self.diagnostics_tab = diagnostics_tab
         self.inspector_tabs.add(diagnostics_tab, text="Diagnósticos")
-        self.inspector_tabs.add(ast_tab, text="Árbol sintáctico")
-        self.inspector_tabs.add(symbols_tab, text="Tabla de símbolos")
+        self.inspector_tabs.add(self.tac_tab, text="Código intermedio")
+        self.inspector_tabs.add(ast_tab, text="AST")
+        self.inspector_tabs.add(symbols_tab, text="Símbolos")
+        self.inspector_tabs.add(environments_tab, text="Entornos")
+        self._build_tac_tab(self.tac_tab)
+        self._build_environments_tab(environments_tab)
 
         result_head = ttk.Frame(diagnostics_tab, style="Surface.TFrame")
         result_head.pack(fill="x")
@@ -361,7 +386,7 @@ class CompiscriptApp:
 
         symbols_shell = tk.Frame(symbols_tab, bg=self.RULE, bd=0, padx=1, pady=1)
         symbols_shell.pack(fill="both", expand=True)
-        symbols_columns = ("category", "type", "initialized")
+        symbols_columns = ("category", "type", "initialized", "address", "size")
         self.symbols_tree = ttk.Treeview(
             symbols_shell, columns=symbols_columns, show="tree headings", selectmode="browse"
         )
@@ -369,10 +394,14 @@ class CompiscriptApp:
         self.symbols_tree.heading("category", text="Categoría")
         self.symbols_tree.heading("type", text="Tipo")
         self.symbols_tree.heading("initialized", text="Inic.")
-        self.symbols_tree.column("#0", width=220, minwidth=160, stretch=True)
-        self.symbols_tree.column("category", width=90, minwidth=80, stretch=False)
-        self.symbols_tree.column("type", width=110, minwidth=90, stretch=True)
-        self.symbols_tree.column("initialized", width=52, minwidth=48, anchor="center", stretch=False)
+        self.symbols_tree.heading("address", text="Dirección")
+        self.symbols_tree.heading("size", text="Bytes")
+        self.symbols_tree.column("#0", width=190, minwidth=150, stretch=True)
+        self.symbols_tree.column("category", width=84, minwidth=76, stretch=False)
+        self.symbols_tree.column("type", width=96, minwidth=80, stretch=True)
+        self.symbols_tree.column("initialized", width=44, minwidth=40, anchor="center", stretch=False)
+        self.symbols_tree.column("address", width=82, minwidth=72, anchor="center", stretch=False)
+        self.symbols_tree.column("size", width=48, minwidth=44, anchor="center", stretch=False)
         self.symbols_tree.tag_configure("scope", foreground=self.MUTED, font=("Segoe UI Semibold", 9))
         symbols_scroll_y = ttk.Scrollbar(symbols_shell, orient="vertical", command=self.symbols_tree.yview)
         symbols_scroll_x = ttk.Scrollbar(symbols_shell, orient="horizontal", command=self.symbols_tree.xview)
@@ -404,10 +433,125 @@ class CompiscriptApp:
         self.editor.bind("<KeyRelease>", self._update_cursor_position, add="+")
         self.editor.bind("<ButtonRelease-1>", self._update_cursor_position, add="+")
 
+    def _build_tac_tab(self, tab: ttk.Frame) -> None:
+        head = ttk.Frame(tab, style="Surface.TFrame")
+        head.pack(fill="x")
+        ttk.Label(head, text="Código intermedio (TAC)", style="Section.TLabel").pack(side="left")
+        self.tac_summary_label = tk.Label(
+            head, text="SIN GENERAR", bg=self.SOFT, fg=self.MUTED,
+            font=("Segoe UI Semibold", 8), padx=9, pady=5,
+        )
+        self.tac_summary_label.pack(side="right")
+
+        # Los botones se empaquetan antes que el texto para que nunca se
+        # compriman cuando el panel es angosto.
+        toolbar = ttk.Frame(tab, style="Surface.TFrame")
+        toolbar.pack(fill="x", pady=(6, 8))
+        self.tac_save_button = ttk.Button(
+            toolbar, text="Guardar .tac", style="Secondary.TButton", command=self.save_tac
+        )
+        self.tac_save_button.pack(side="right")
+        self.tac_copy_button = ttk.Button(
+            toolbar, text="Copiar", style="Secondary.TButton", command=self.copy_tac
+        )
+        self.tac_copy_button.pack(side="right", padx=(0, 6))
+        self.tac_detail_label = ttk.Label(
+            toolbar, text="Compile el archivo (F5) para generar el TAC.", style="Meta.TLabel"
+        )
+        self.tac_detail_label.pack(side="left")
+        ttk.Label(
+            tab, text="Clic en una instrucción para resaltar la línea de código que la originó.",
+            style="Meta.TLabel",
+        ).pack(side="bottom", anchor="w", pady=(8, 0))
+
+        shell = tk.Frame(tab, bg=self.RULE, bd=0, padx=1, pady=1)
+        shell.pack(fill="both", expand=True)
+        scroll_y = ttk.Scrollbar(shell, orient="vertical")
+        scroll_x = ttk.Scrollbar(shell, orient="horizontal")
+        scroll_y.pack(side="right", fill="y")
+        scroll_x.pack(side="bottom", fill="x")
+        self.tac_text = tk.Text(
+            shell, wrap="none", padx=14, pady=12, bd=0, relief="flat", cursor="arrow",
+            background=self.SURFACE, foreground=self.INK, selectbackground="#CBD9F0",
+            selectforeground=self.INK, font=("Cascadia Mono", 10), spacing1=1, spacing3=1,
+            yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set, state="disabled",
+        )
+        self.tac_text.pack(side="left", fill="both", expand=True)
+        scroll_y.configure(command=self.tac_text.yview)
+        scroll_x.configure(command=self.tac_text.xview)
+        self.tac_text.tag_configure("tac_label", foreground=self.BLUE, font=("Cascadia Mono", 10, "bold"))
+        self.tac_text.tag_configure("tac_function", foreground=self.VIOLET, font=("Cascadia Mono", 10, "bold"))
+        self.tac_text.tag_configure("tac_keyword", foreground=self.BLUE)
+        self.tac_text.tag_configure("tac_temp", foreground="#8A4D14")
+        self.tac_text.tag_configure("tac_string", foreground="#8B3D64")
+        self.tac_text.tag_configure("tac_current", background="#DCE6F7")
+        self.tac_text.bind("<ButtonRelease-1>", self._go_to_tac_source)
+
+        self.tac_empty_message = tk.Label(
+            shell, text="El código intermedio aparecerá aquí después de compilar.",
+            bg=self.SURFACE, fg=self.MUTED, font=("Segoe UI Semibold", 11), justify="center",
+        )
+        self.tac_empty_message.place(relx=0.5, rely=0.45, anchor="center")
+
+    def _build_environments_tab(self, tab: ttk.Frame) -> None:
+        head = ttk.Frame(tab, style="Surface.TFrame")
+        head.pack(fill="x")
+        ttk.Label(head, text="Registros de activación y objetos", style="Section.TLabel").pack(side="left")
+        self.environments_summary_label = tk.Label(
+            head, text="SIN GENERAR", bg=self.SOFT, fg=self.MUTED,
+            font=("Segoe UI Semibold", 8), padx=9, pady=5,
+        )
+        self.environments_summary_label.pack(side="right")
+
+        toolbar = ttk.Frame(tab, style="Surface.TFrame")
+        toolbar.pack(fill="x", pady=(6, 8))
+        ttk.Button(
+            toolbar, text="Contraer", style="Secondary.TButton", command=self._collapse_environments
+        ).pack(side="right")
+        ttk.Button(
+            toolbar, text="Expandir", style="Secondary.TButton", command=self._expand_environments
+        ).pack(side="right", padx=(0, 6))
+        self.environments_detail_label = ttk.Label(
+            toolbar, text="Compile el archivo para calcular los entornos.", style="Meta.TLabel"
+        )
+        self.environments_detail_label.pack(side="left")
+
+        shell = tk.Frame(tab, bg=self.RULE, bd=0, padx=1, pady=1)
+        shell.pack(fill="both", expand=True)
+        self.environments_tree = ttk.Treeview(
+            shell, columns=("offset", "size", "detail"), show="tree headings", selectmode="browse"
+        )
+        self.environments_tree.heading("#0", text="Registro / casilla")
+        self.environments_tree.heading("offset", text="Despl.")
+        self.environments_tree.heading("size", text="Bytes")
+        self.environments_tree.heading("detail", text="Detalle")
+        self.environments_tree.column("#0", width=190, minwidth=150, stretch=True)
+        self.environments_tree.column("offset", width=60, minwidth=54, anchor="center", stretch=False)
+        self.environments_tree.column("size", width=52, minwidth=48, anchor="center", stretch=False)
+        self.environments_tree.column("detail", width=220, minwidth=150, stretch=True)
+        self.environments_tree.tag_configure("scope", foreground=self.MUTED, font=("Segoe UI Semibold", 9))
+        self.environments_tree.tag_configure("temporary", foreground="#8A4D14")
+        self.environments_tree.tag_configure("header", foreground=self.MUTED)
+        scroll_y = ttk.Scrollbar(shell, orient="vertical", command=self.environments_tree.yview)
+        scroll_x = ttk.Scrollbar(shell, orient="horizontal", command=self.environments_tree.xview)
+        scroll_y.pack(side="right", fill="y")
+        scroll_x.pack(side="bottom", fill="x")
+        self.environments_tree.pack(side="left", fill="both", expand=True)
+        self.environments_tree.configure(yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
+        self.environments_tree.bind("<<TreeviewSelect>>", self._show_selected_environment_detail)
+        self.environments_tree.bind("<Double-1>", self._go_to_selected_environment)
+        self.environments_tree.bind("<Return>", self._go_to_selected_environment)
+
+        self.environments_empty_message = tk.Label(
+            shell, text="Los registros de activación aparecerán aquí después de compilar.",
+            bg=self.SURFACE, fg=self.MUTED, font=("Segoe UI Semibold", 11), justify="center",
+        )
+        self.environments_empty_message.place(relx=0.5, rely=0.45, anchor="center")
+
     def _set_initial_split(self) -> None:
         width = self.panes.winfo_width()
         if width > 1:
-            self.panes.sashpos(0, int(width * 0.57))
+            self.panes.sashpos(0, int(width * 0.52))
 
     def _configure_editor_tags(self) -> None:
         self.editor.tag_configure("keyword", foreground=self.BLUE, font=("Cascadia Mono", 10, "bold"))
@@ -416,6 +560,7 @@ class CompiscriptApp:
         self.editor.tag_configure("comment", foreground="#59694F")
         self.editor.tag_configure("error_line", background=self.RED_PALE)
         self.editor.tag_configure("active_error", background="#F4CFD8")
+        self.editor.tag_configure("tac_source", background="#DCE6F7")
 
     def _bind_shortcuts(self) -> None:
         self.root.bind("<Control-o>", lambda _: self.open_file())
@@ -500,12 +645,13 @@ class CompiscriptApp:
         self.editor.edit_modified(False)
         self.dirty = False
         self.last_result = None
+        self.last_compilation = None
         self.last_symbol_table = None
         self.last_diagnostics = []
         self._update_file_labels()
         self._refresh_line_numbers()
         self._highlight_source()
-        self._set_empty_state("Archivo cargado. Presione F5 para analizar.")
+        self._set_empty_state("Archivo cargado. Presione F5 para compilar.")
         self.status_label.configure(text=f"{len(source.encode('utf-8')):,} bytes")
         self.editor.focus_set()
 
@@ -534,58 +680,58 @@ class CompiscriptApp:
             messagebox.showinfo("Archivo vacío", "Abra un archivo .cps o escriba código antes de analizar.")
             return
         self.analyze_button.state(["disabled"])
-        self.status_label.configure(text="Analizando…")
+        self.status_label.configure(text="Compilando…")
         self.root.configure(cursor="watch")
         self.root.update_idletasks()
         try:
-            result = self.analyzer.analyze(source)
-            symbol_table, scope_diagnostics = build_symbol_table(result.ast)
-            type_diagnostics = analyze_semantics(symbol_table, result.ast)
+            compilation = compile_source(source, self.analyzer)
         finally:
             self.root.configure(cursor="")
             self.analyze_button.state(["!disabled"])
-        self.last_result = result
-        self.last_symbol_table = symbol_table
-        self.last_diagnostics = self._merge_diagnostics(
-            result.diagnostics, scope_diagnostics + type_diagnostics
-        )
-        self._show_result(result)
-
-    @staticmethod
-    def _merge_diagnostics(
-        syntax_diagnostics: tuple[Diagnostic, ...], semantic_diagnostics: list
-    ) -> list:
-        order = {"Léxico": 0, "Sintáctico": 1, "Semántico": 2}
-        combined = list(syntax_diagnostics) + list(semantic_diagnostics)
-        combined.sort(key=lambda item: (item.line, item.column, order.get(item.kind, 3)))
-        return combined
+        self.last_compilation = compilation
+        self.last_result = compilation.analysis
+        self.last_symbol_table = compilation.symbol_table
+        self.last_diagnostics = compilation.diagnostics
+        self._show_result(compilation.analysis)
 
     def _show_result(self, result: AnalysisResult) -> None:
         for item in self.results.get_children():
             self.results.delete(item)
         self.editor.tag_remove("error_line", "1.0", "end")
         self.editor.tag_remove("active_error", "1.0", "end")
+        self.editor.tag_remove("tac_source", "1.0", "end")
         self.empty_message.place_forget()
         self._show_ast(result)
         self._show_symbol_table(result, self.last_symbol_table)
+        self._show_tac(self.last_compilation)
+        self._show_environments(self.last_compilation)
 
         diagnostics = self.last_diagnostics
         semantic_count = sum(1 for item in diagnostics if item.kind == "Semántico")
 
         if not diagnostics:
+            tac = self.last_compilation.tac if self.last_compilation is not None else None
+            instructions = len(tac) if tac is not None else 0
             self._set_badge(self.summary_label, "SIN ERRORES", "success")
             self.result_detail.configure(
-                text=f"{result.line_count} líneas · {result.token_count} tokens · {result.elapsed_ms:.1f} ms"
+                text=(
+                    f"{result.line_count} líneas · {result.token_count} tokens · "
+                    f"{instructions} instrucciones TAC · {result.elapsed_ms:.1f} ms"
+                )
             )
             self.empty_message.configure(
-                text="El archivo fue analizado correctamente.\nNo se encontraron errores léxicos, sintácticos ni semánticos.",
+                text=(
+                    "El archivo fue compilado correctamente.\nNo se encontraron errores léxicos, "
+                    "sintácticos ni semánticos.\nEl código intermedio está en la pestaña «Código intermedio»."
+                ),
                 fg=self.GREEN,
             )
             self.empty_message.place(relx=0.5, rely=0.45, anchor="center")
             self.diagnostic_detail.configure(
                 text="Detalle: el archivo no contiene diagnósticos.", fg=self.GREEN
             )
-            self.status_label.configure(text="Análisis completado sin errores")
+            self.status_label.configure(text=f"Compilación exitosa: {instructions} instrucciones TAC")
+            self.inspector_tabs.select(self.tac_tab)
             return
 
         total = len(diagnostics)
@@ -594,12 +740,15 @@ class CompiscriptApp:
             f"{total} {'ERROR' if total == 1 else 'ERRORES'}",
             "error",
         )
+        generation_count = sum(1 for item in diagnostics if item.kind == GENERATION_KIND)
+        generation_text = f" · {generation_count} de generación" if generation_count else ""
         self.result_detail.configure(
             text=(
                 f"{result.lexical_count} léxicos · {result.syntactic_count} sintácticos · "
-                f"{semantic_count} semánticos · {result.elapsed_ms:.1f} ms"
+                f"{semantic_count} semánticos{generation_text} · {result.elapsed_ms:.1f} ms"
             )
         )
+        self.inspector_tabs.select(self.diagnostics_tab)
         for index, diagnostic in enumerate(diagnostics):
             tag = self._diagnostic_tag(diagnostic.kind)
             tags = (tag, "odd") if index % 2 else (tag,)
@@ -612,14 +761,14 @@ class CompiscriptApp:
         first = self.results.get_children()[0]
         self.results.selection_set(first)
         self._show_selected_detail()
-        self.status_label.configure(text=f"Análisis completado: {total} diagnósticos")
+        self.status_label.configure(text=f"Compilación detenida: {total} diagnósticos, no se generó TAC")
 
     @staticmethod
     def _diagnostic_tag(kind: str) -> str:
-        return {"Léxico": "lexical", "Sintáctico": "syntactic"}.get(kind, "semantic")
+        return {"Léxico": "lexical", "Sintáctico": "syntactic", GENERATION_KIND: "lexical"}.get(kind, "semantic")
 
     def _diagnostic_color(self, kind: str) -> str:
-        return {"Léxico": self.RED, "Sintáctico": self.AMBER}.get(kind, self.VIOLET)
+        return {"Léxico": self.RED, "Sintáctico": self.AMBER, GENERATION_KIND: self.RED}.get(kind, self.VIOLET)
 
     def _set_badge(self, label: tk.Label, text: str, tone: str = "neutral") -> None:
         colors = {
@@ -747,7 +896,7 @@ class CompiscriptApp:
     def _insert_scope_node(self, parent: str, scope: Scope, depth: int) -> str:
         label = "Global" if scope.kind is ScopeKind.GLOBAL else f"{scope.kind.value} · {scope.name}"
         item = self.symbols_tree.insert(
-            parent, "end", text=label, values=("", "", ""), open=depth < 2, tags=("scope",),
+            parent, "end", text=label, values=("", "", "", "", ""), open=depth < 2, tags=("scope",),
         )
         self.scope_by_item[item] = scope
         for symbol in scope.symbols.values():
@@ -761,7 +910,13 @@ class CompiscriptApp:
             parent,
             "end",
             text=symbol.name,
-            values=(symbol.category.value, symbol.type_name or "-", "sí" if symbol.initialized else "no"),
+            values=(
+                symbol.category.value,
+                symbol.type_name or symbol.runtime_type or "-",
+                "sí" if symbol.initialized else "no",
+                self._symbol_address(symbol),
+                self._symbol_size(symbol),
+            ),
             open=False,
         )
         self.symbol_by_item[item] = symbol
@@ -794,11 +949,16 @@ class CompiscriptApp:
             return
 
         parts = [f"{symbol.category.value} «{symbol.name}»"]
-        if symbol.type_name:
-            parts.append(f"tipo {symbol.type_name}")
+        if symbol.type_name or symbol.runtime_type:
+            parts.append(f"tipo {symbol.type_name or symbol.runtime_type}")
+        if symbol.address:
+            parts.append(f"dirección {symbol.address} ({symbol.size} B, {symbol.storage.value} en {symbol.owner})")
         if symbol.category is SymbolCategory.FUNCTION:
             params = ", ".join(f"{p.name}: {p.type_name or '?'}" for p in symbol.parameters)
             parts.append(f"({params}) -> {symbol.return_type or 'void'}")
+            if symbol.activation_record is not None:
+                record = symbol.activation_record
+                parts.append(f"etiqueta {record.name}, registro de {record.size} B")
             if symbol.captured_names:
                 parts.append(f"captura: {', '.join(sorted(symbol.captured_names))}")
         if symbol.category is SymbolCategory.CLASS:
@@ -808,8 +968,28 @@ class CompiscriptApp:
                 parts.append(f"atributos: {', '.join(sorted(symbol.attributes))}")
             if symbol.methods:
                 parts.append(f"métodos: {', '.join(sorted(symbol.methods))}")
+            if symbol.class_layout is not None:
+                parts.append(f"instancia de {symbol.class_layout.size} B")
         parts.append(f"línea {symbol.line}, columna {symbol.column}")
         self.symbols_detail_label.configure(text=" · ".join(parts))
+
+    @staticmethod
+    def _symbol_address(symbol: Symbol) -> str:
+        if symbol.address:
+            return symbol.address
+        if symbol.activation_record is not None:
+            return symbol.activation_record.name
+        return "-"
+
+    @staticmethod
+    def _symbol_size(symbol: Symbol) -> str:
+        if symbol.size:
+            return str(symbol.size)
+        if symbol.activation_record is not None:
+            return str(symbol.activation_record.size)
+        if symbol.class_layout is not None:
+            return str(symbol.class_layout.size)
+        return "-"
 
     def _go_to_selected_symbol(self, _event=None) -> None:
         selected = self.symbols_tree.selection()
@@ -839,6 +1019,262 @@ class CompiscriptApp:
         for item in self.symbols_tree.get_children():
             self._set_symbols_open(item, False)
             self.symbols_tree.item(item, open=True)
+
+    # -- código intermedio -----------------------------------------------------
+    def _show_tac(self, compilation: CompilationResult | None) -> None:
+        self._clear_tac()
+        if compilation is None:
+            return
+        if compilation.tac is None:
+            total = len(compilation.diagnostics)
+            self._set_badge(self.tac_summary_label, "NO GENERADO", "error")
+            self.tac_detail_label.configure(text="El programa tiene errores; no se genera código intermedio.")
+            self.tac_empty_message.configure(
+                text=(
+                    f"No se generó código intermedio.\nCorrija {'el error' if total == 1 else f'los {total} errores'} "
+                    "de la pestaña «Diagnósticos»."
+                ),
+                fg=self.RED,
+            )
+            return
+
+        lines = compilation.tac.rendered_lines()
+        self.tac_line_instructions = [instruction for _text, instruction in lines]
+        self.tac_text.configure(state="normal")
+        self.tac_text.insert("1.0", "\n".join(text for text, _instruction in lines))
+        self._highlight_tac()
+        self.tac_text.configure(state="disabled")
+        self.tac_empty_message.place_forget()
+        self.tac_save_button.state(["!disabled"])
+        self.tac_copy_button.state(["!disabled"])
+
+        functions = sum(1 for instruction in compilation.tac if instruction.op.name == "BEGIN_FUNC")
+        self._set_badge(self.tac_summary_label, f"{len(compilation.tac)} INSTRUCCIONES", "success")
+        usage = compilation.temp_usage
+        created = sum(item.created for item in usage)
+        reuses = sum(item.reuses for item in usage)
+        peak = max((item.max_live for item in usage), default=0)
+        self.tac_detail_label.configure(
+            text=f"{functions} funciones · {created} temporales · {reuses} reciclados · máx. {peak} vivos"
+        )
+
+    def _highlight_tac(self) -> None:
+        text = self.tac_text.get("1.0", "end-1c")
+        keyword_pattern = r"\b(?:" + "|".join(self.TAC_KEYWORDS) + r")\b"
+        patterns = (
+            ("tac_function", r"^(?:begin_func|end_func)\b[^\n]*"),
+            ("tac_label", r"^[^\s\n][^\n]*:$"),
+            ("tac_string", r'"(?:\\.|[^"\\\n])*"'),
+            ("tac_keyword", keyword_pattern),
+            ("tac_temp", r"\bt\d+\b"),
+        )
+        for tag, pattern in patterns:
+            for match in re.finditer(pattern, text, re.MULTILINE):
+                self.tac_text.tag_add(tag, f"1.0+{match.start()}c", f"1.0+{match.end()}c")
+
+    def _clear_tac(self) -> None:
+        self.tac_line_instructions = []
+        self.tac_text.configure(state="normal")
+        self.tac_text.delete("1.0", "end")
+        self.tac_text.configure(state="disabled")
+        self.tac_save_button.state(["disabled"])
+        self.tac_copy_button.state(["disabled"])
+        self._set_badge(self.tac_summary_label, "SIN GENERAR")
+        self.tac_detail_label.configure(text="Compile el archivo (F5) para generar el código intermedio.")
+        self.tac_empty_message.configure(
+            text="El código intermedio aparecerá aquí después de compilar.", fg=self.MUTED
+        )
+        self.tac_empty_message.place(relx=0.5, rely=0.45, anchor="center")
+
+    def _go_to_tac_source(self, _event=None) -> None:
+        if not self.tac_line_instructions:
+            return
+        line_number = int(self.tac_text.index("insert").split(".")[0])
+        self.tac_text.tag_remove("tac_current", "1.0", "end")
+        self.tac_text.tag_add("tac_current", f"{line_number}.0", f"{line_number}.end+1c")
+        if line_number > len(self.tac_line_instructions):
+            return
+        instruction = self.tac_line_instructions[line_number - 1]
+        if instruction is None or instruction.line is None:
+            return
+        self.editor.tag_remove("tac_source", "1.0", "end")
+        self.editor.tag_add("tac_source", f"{instruction.line}.0", f"{instruction.line}.end")
+        self.editor.see(f"{instruction.line}.0")
+        self.status_label.configure(text=f"Instrucción TAC generada por la línea {instruction.line}")
+
+    def _tac_text(self) -> str | None:
+        compilation = self.last_compilation
+        if compilation is None or compilation.tac is None:
+            return None
+        return compilation.tac.render() + "\n"
+
+    def copy_tac(self) -> None:
+        text = self._tac_text()
+        if text is None:
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.status_label.configure(text="Código intermedio copiado al portapapeles")
+
+    def save_tac(self) -> None:
+        text = self._tac_text()
+        if text is None:
+            return
+        initial = f"{self.current_file.stem}.tac" if self.current_file is not None else "programa.tac"
+        selected = filedialog.asksaveasfilename(
+            title="Guardar código intermedio", defaultextension=".tac", initialfile=initial,
+            filetypes=(("Código de tres direcciones", "*.tac"), ("Texto", "*.txt")),
+        )
+        if not selected:
+            return
+        try:
+            Path(selected).write_text(text, encoding="utf-8")
+        except OSError as exc:
+            messagebox.showerror("No se pudo guardar", f"No fue posible guardar el TAC:\n{exc}")
+            return
+        self.status_label.configure(text=f"Código intermedio guardado en {Path(selected).name}")
+
+    # -- entornos de ejecución -----------------------------------------------
+    def _show_environments(self, compilation: CompilationResult | None) -> None:
+        self._clear_environments()
+        if compilation is None:
+            return
+        table = compilation.symbol_table
+        if compilation.tac is None or table is None or not table.has_layout:
+            self._set_badge(self.environments_summary_label, "NO DISPONIBLE", "error")
+            self.environments_detail_label.configure(text="Los entornos se calculan sólo para programas sin errores.")
+            self.environments_empty_message.configure(
+                text="No hay entornos de ejecución.\nEl programa tiene errores.", fg=self.RED
+            )
+            return
+
+        for record in [table.global_record, *table.activation_records]:
+            self._insert_record(record)
+        for layout in table.class_layouts.values():
+            self._insert_class_layout(layout)
+        self.environments_empty_message.place_forget()
+        records = len(table.activation_records) + 1
+        classes = len(table.class_layouts)
+        self._set_badge(
+            self.environments_summary_label,
+            f"{records} REGISTROS · {classes} {'CLASE' if classes == 1 else 'CLASES'}",
+            "success",
+        )
+        self.environments_detail_label.configure(text="Desplazamientos en bytes desde fp, global u obj.")
+
+    def _insert_record(self, record: ActivationRecord) -> None:
+        if record.kind == "programa":
+            title = "Área global (programa)"
+            detail = "variables globales y temporales del código global"
+        else:
+            title = f"{record.kind} {record.name}"
+            detail = f"nivel {record.level} · enlace de acceso → {record.parent or '-'}"
+        item = self.environments_tree.insert(
+            "", "end", text=title, values=("", record.size, detail), open=record.kind == "programa",
+            tags=("scope",),
+        )
+        self.environment_by_item[item] = record
+        for slot in record.all_slots():
+            self._insert_slot(item, slot, record)
+
+    _HEADER_DETAILS = {
+        "dirección de retorno": "instrucción a la que vuelve el llamador",
+        "enlace de control": "fp del registro del llamador",
+        "puntero a vtable": "tabla de métodos de la clase real",
+    }
+
+    def _insert_slot(self, parent: str, slot: FrameSlot, record: ActivationRecord | None = None) -> None:
+        if slot.role == "enlace de acceso":
+            detail = f"fp del entorno léxico ({record.parent if record is not None else '-'})"
+        else:
+            detail = self._HEADER_DETAILS.get(slot.role) or (
+                slot.role + (f" · {slot.type_name}" if slot.type_name else "")
+            )
+        tags = {"temporal": ("temporary",), "dirección de retorno": ("header",),
+                "enlace de control": ("header",), "enlace de acceso": ("header",),
+                "puntero a vtable": ("header",)}.get(slot.role, ())
+        item = self.environments_tree.insert(
+            parent, "end", text=slot.name, values=(f"+{slot.offset}", slot.size, detail), tags=tags
+        )
+        self.environment_by_item[item] = slot
+
+    def _insert_class_layout(self, layout: ClassLayout) -> None:
+        detail = f"instancia · extiende {layout.superclass}" if layout.superclass else "instancia"
+        item = self.environments_tree.insert(
+            "", "end", text=f"clase {layout.name}", values=("", layout.size, detail), open=False,
+            tags=("scope",),
+        )
+        self.environment_by_item[item] = layout
+        for slot in layout.slots:
+            self._insert_slot(item, slot)
+        vtable = self.environments_tree.insert(
+            item, "end", text="vtable", values=("", len(layout.vtable) * 4, "métodos con despacho dinámico"),
+            open=True, tags=("scope",),
+        )
+        for index, (method, label) in enumerate(layout.vtable):
+            self.environments_tree.insert(
+                vtable, "end", text=f"[{index}] {method}", values=(f"+{index * 4}", 4, f"→ {label}")
+            )
+
+    def _clear_environments(self) -> None:
+        for item in self.environments_tree.get_children():
+            self.environments_tree.delete(item)
+        self.environment_by_item.clear()
+        self._set_badge(self.environments_summary_label, "SIN GENERAR")
+        self.environments_detail_label.configure(text="Compile el archivo para calcular los entornos de ejecución.")
+        self.environments_empty_message.configure(
+            text="Los registros de activación aparecerán aquí después de compilar.", fg=self.MUTED
+        )
+        self.environments_empty_message.place(relx=0.5, rely=0.45, anchor="center")
+
+    def _show_selected_environment_detail(self, _event=None) -> None:
+        selected = self.environments_tree.selection()
+        if not selected:
+            return
+        value = self.environment_by_item.get(selected[0])
+        if isinstance(value, ActivationRecord):
+            text = (
+                f"{value.kind} {value.name} · {value.size} B · {len(value.slots)} casillas de datos · "
+                f"{value.temporaries} temporales"
+            )
+        elif isinstance(value, ClassLayout):
+            text = f"clase {value.name} · instancias de {value.size} B · {len(value.vtable)} métodos en la vtable"
+        elif isinstance(value, FrameSlot):
+            text = f"{value.name}: {value.role} en +{value.offset} ({value.size} B)"
+            if value.symbol is not None:
+                text += f" · declarado en la línea {value.symbol.line}; doble clic para ir"
+        else:
+            return
+        self.environments_detail_label.configure(text=text)
+
+    def _go_to_selected_environment(self, _event=None) -> None:
+        selected = self.environments_tree.selection()
+        if not selected:
+            return
+        value = self.environment_by_item.get(selected[0])
+        symbol = value.symbol if isinstance(value, FrameSlot) else None
+        if symbol is None:
+            return
+        self.editor.tag_remove("active_error", "1.0", "end")
+        start = f"{symbol.line}.{max(symbol.column - 1, 0)}"
+        self.editor.tag_add("active_error", start, f"{symbol.line}.end")
+        self.editor.mark_set("insert", start)
+        self.editor.see(start)
+        self.editor.focus_set()
+        self._update_cursor_position()
+
+    def _set_environments_open(self, item: str, is_open: bool) -> None:
+        self.environments_tree.item(item, open=is_open)
+        for child in self.environments_tree.get_children(item):
+            self._set_environments_open(child, is_open)
+
+    def _expand_environments(self) -> None:
+        for item in self.environments_tree.get_children():
+            self._set_environments_open(item, True)
+
+    def _collapse_environments(self) -> None:
+        for item in self.environments_tree.get_children():
+            self._set_environments_open(item, False)
 
     def _show_selected_detail(self, _event=None) -> None:
         selected = self.results.selection()
@@ -879,19 +1315,22 @@ class CompiscriptApp:
         self.empty_message.place(relx=0.5, rely=0.45, anchor="center")
         self._clear_ast(message or "Analice el archivo para construir el AST.")
         self._clear_symbols(message or "Analice el archivo para construir la tabla de símbolos.")
+        self._clear_tac()
+        self._clear_environments()
+        self.editor.tag_remove("tac_source", "1.0", "end")
 
 
     def _update_file_labels(self) -> None:
         if self.current_file is None:
             self.file_name_label.configure(text="Ningún archivo abierto")
             self.file_path_label.configure(text="Seleccione un archivo .cps para comenzar")
-            self.root.title("Analizador Compiscript")
+            self.root.title("Compilador Compiscript")
             return
         marker = " •" if self.dirty else ""
         self.file_name_label.configure(text=f"{self.current_file.name}{marker}")
         self.file_path_label.configure(text=str(self.current_file.parent))
         dirty_title = " *" if self.dirty else ""
-        self.root.title(f"{self.current_file.name}{dirty_title} — Analizador Compiscript")
+        self.root.title(f"{self.current_file.name}{dirty_title} — Compilador Compiscript")
 
     def _update_cursor_position(self, _event=None) -> None:
         line, column = self.editor.index("insert").split(".")
