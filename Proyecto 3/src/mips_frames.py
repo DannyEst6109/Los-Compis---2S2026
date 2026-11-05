@@ -342,7 +342,7 @@ class FrameModel:
                 raise MipsFrameError(
                     f"«{var.name}» pertenece a «{symbol.owner}» y no es accesible desde el código global."
                 )
-            hops = self._hops_to(frame, symbol.owner, var.name)
+            hops = self.hops_to(frame, symbol.owner, var.name)
             setup, base = self.follow_access_links(hops)
             return MemoryLocation(base, frame_offset(symbol.offset, symbol.size), symbol.size, setup)
         if storage is StorageKind.FIELD:
@@ -362,9 +362,10 @@ class FrameModel:
             hops += 1
         raise MipsFrameError("«this» sólo existe dentro de un método, constructor o inicializador.")
 
-    def _hops_to(self, frame: FrameLayout, owner: str | None, name: str) -> int:
+    def hops_to(self, frame: FrameLayout, owner: str | None, name: str) -> int:
         """Cuántos enlaces de acceso hay que seguir desde ``frame`` para
-        llegar al registro ``owner``."""
+        llegar al registro ``owner``. ``name`` (la variable o función que se
+        busca) sólo aparece en el mensaje de error."""
         hops, record = 0, frame.record
         while record is not None and record is not self.global_area.record:
             if record.name == owner:
@@ -372,7 +373,7 @@ class FrameModel:
             record = self.table.record(record.parent) if record.parent else None
             hops += 1
         raise MipsFrameError(
-            f"«{name}» pertenece a «{owner}», que no contiene a «{frame.name}»: no es accesible desde ahí."
+            f"«{name}» está en «{owner}», que no contiene a «{frame.name}»: no es accesible desde ahí."
         )
 
     @staticmethod

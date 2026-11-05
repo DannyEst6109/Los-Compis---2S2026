@@ -230,26 +230,56 @@ propio marco (por eso el paso 1 de la sección 3 los escribe a memoria).
   prefijo `fn_` (`fn_Perro_hablar`, `fn_Animal__init`, `fn_a_1`). **Nadie más
   debe crear etiquetas que empiecen con `fn_`**, ni usar `main` o `globales`.
   Las etiquetas `L1, L2, …` del control de flujo se dejan igual.
-- La traducción de `begin_func`, `end_func`, `return`, `param` y `call`, y el
-  punto de entrada `main`.
+- `FunctionTranslator(model, registros)` (`src/mips_functions.py`) traduce
+  `begin_func`, `end_func`, `return`, `param` y `call` (`HANDLED_OPS`). Quien
+  integra recorre el TAC y:
+  - en `begin_func` llama a `begin_function(instr)` y empieza a juntar las
+    líneas del cuerpo;
+  - manda cada `param`, `call` y `return` a `translate_param`,
+    `translate_call` y `translate_return` (también en el código global);
+  - en `end_func` llama a `end_function(instr, cuerpo)`, que devuelve la
+    función completa: prólogo + cuerpo + epílogo. El prólogo se arma al
+    final porque depende de los `$s` que usó el cuerpo;
+  - puede llamar a `ensure_no_pending_params(instr)` antes de cualquier otra
+    instrucción: entre los `param` y su `call` no debe haber nada más.
+  - `translator.unit` dice en qué función se está (la `unit` de
+    `address_of`).
+- El punto de entrada `main` (Fase 5).
+- **Formato de las líneas** (para todos): cada parte devuelve listas de
+  cadenas sin sangría; una etiqueta termina en `:` y un comentario empieza
+  con `#`. La sangría la pone quien escribe el archivo final.
 
-**Persona 2 ofrece** (asignación de registros):
-- Guardar a memoria todos los registros modificados y olvidar su contenido
-  (antes y después de cada llamada).
-- Cargar un operando en un registro, o en uno específico (por ejemplo `$v0`
-  para `return`).
-- Asociar el resultado de una llamada (`$v0`) a su temporal.
-- La lista de registros `$s` que usó cada función.
+**Persona 2 ofrece** (asignación de registros): un objeto con estos métodos
+(el contrato completo está en `RegisterAllocator`, en `src/mips_functions.py`).
+`unit` es la etiqueta TAC de la función actual o `None`:
+
+| Método | Qué hace |
+| --- | --- |
+| `value_register(op, unit) -> (líneas, reg)` | Deja el valor de `op` en algún registro y lo devuelve (argumentos y destino de `jalr`) |
+| `load_into(op, unit, reg) -> líneas` | Deja el valor de `op` en `reg` (por ejemplo `$v0` en `return`) |
+| `assign_from(op, unit, reg) -> líneas` | `op = reg` (el resultado de una llamada llega en `$v0`) |
+| `spill(unit) -> líneas` | Escribe a memoria los registros modificados (antes de `jal` y al salir de la función) |
+| `forget()` | Olvida el contenido de todos los registros (después de `jal` y al empezar o terminar una función) |
+| `saved_registers(unit)` | Registros `$s` que usó esa función |
+
 - No asignar `$v1`, `$a0-$a3` (salvo para `syscall`), `$gp`, `$sp`, `$fp` ni
   `$ra`.
+- En las pruebas de Persona 1 hay un doble de prueba de este contrato
+  (`tests/mips_doubles.py`, `MemoryRegisters`) que deja todo en memoria;
+  sirve de ejemplo mínimo.
 
 **Persona 3 necesita**:
-- Para `method` + `call t, n`: el destino queda en un registro y se usa
-  `jalr`; `this` es el primer argumento.
-- Para `try/catch`: al instalar un manejador basta guardar `$fp`. Al atrapar
-  un error, se restaura ese `$fp` y `$sp = $fp - SIZE` de la función que lo
-  instaló (`model.frame(...).size`, o 0 en el código global); eso descarta
-  todos los marcos intermedios.
+- Para `t = method o.m` + `call t, n`: pasar a
+  `translate_call(instr, method_frame)` el marco del método en el tipo
+  estático de `o`: `model.frame(etiqueta)`, con la etiqueta de su vtable
+  (`ClassLayout.vtable[ClassLayout.method_index(m)]`). De ahí salen el
+  prefijo y la casilla de cada argumento. El destino se carga en un registro
+  y se usa `jalr`; `this` es el primer argumento.
+- Para `try/catch`: al instalar un manejador, guardar `$fp` **y** `$sp`; al
+  atrapar un error, restaurar los dos. Eso descarta todos los marcos
+  intermedios (dentro del cuerpo de una función `$sp` no cambia fuera de las
+  llamadas). No conviene calcular `$sp` con el tamaño del marco: éste se
+  conoce al terminar de traducir la función.
 
 ## A tener en cuenta
 
