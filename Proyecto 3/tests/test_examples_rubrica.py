@@ -1,8 +1,7 @@
 """Ejemplos cortos por criterio de la rúbrica (examples/NN_*.cps).
 
 Cada archivo debe compilar sin errores y traer al final un caso de error
-comentado: la línea que sigue a «// Esperado:» (y a sus líneas de
-continuación). Al quitarle el «//», el programa debe fallar con un
+comentado después del separador de guiones. Al quitarle el «//», el programa debe fallar con un
 diagnóstico y no generar código intermedio.
 """
 
@@ -21,13 +20,13 @@ RUBRIC_EXAMPLES = sorted((PROJECT / "examples").glob("[0-9][0-9]_*.cps"))
 
 
 def with_error_uncommented(source: str) -> str:
-    """Devuelve ``source`` con la línea de error descomentada (la última
-    línea comentada del archivo, que viene después de «// Esperado:»)."""
+    """Devuelve el ejemplo con su caso de error descomentado."""
     lines = source.splitlines()
-    expected = next(index for index, line in enumerate(lines) if line.startswith("// Esperado:"))
-    error_line = max(index for index, line in enumerate(lines) if line.startswith("// "))
-    if error_line <= expected:
-        raise AssertionError("No hay una línea de error comentada después de «// Esperado:».")
+    separator = max(index for index, line in enumerate(lines) if line.startswith("// -----"))
+    error_lines = [index for index in range(separator + 1, len(lines)) if lines[index].strip()]
+    if len(error_lines) != 1 or not lines[error_lines[0]].startswith("// "):
+        raise AssertionError("Se esperaba una línea de error comentada después del separador.")
+    error_line = error_lines[0]
     lines[error_line] = lines[error_line][3:]
     return "\n".join(lines)
 
