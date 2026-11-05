@@ -31,6 +31,24 @@ Prólogo y epílogo de ``f``::
         lw    $fp, -8($fp)
         jr    $ra
 
+Punto de entrada (``main_program``) y área global (``data_lines``)::
+
+        .data
+        .align 2
+    globales: .space N                     variables y temporales del código global
+        .text
+        .globl main
+    main:                                  va antes que las funciones
+        la    $gp, globales
+        move  $fp, $sp                     base de la cadena de marcos
+        ...código global...
+        li    $v0, 10                      termina el programa
+        syscall
+
+Con ``trace=True`` cada función imprime al entrar ``#>nombre arg1 arg2…`` y
+al salir ``#<nombre``. Con esa salida ``activation_tree.py`` reconstruye el
+árbol de activación de la ejecución.
+
 Las instrucciones se devuelven como listas de cadenas sin sangría; una
 etiqueta termina en ``:`` y un comentario empieza con ``#``. Este módulo no
 decide en qué registro vive cada valor: eso lo hace la asignación de
@@ -44,6 +62,10 @@ from typing import Iterable, Protocol
 from mips_frames import (
     CONTROL_LINK_OFFSET,
     FP,
+    GLOBAL_AREA_LABEL,
+    GP,
+    LINK_REGISTER,
+    MAIN_LABEL,
     RA,
     RETURN_ADDRESS_OFFSET,
     RETURN_VALUE,
@@ -53,6 +75,17 @@ from mips_frames import (
     FrameModel,
     MipsFrameError,
 )
+
+# Marcas de la traza de activaciones (las lee activation_tree.py).
+TRACE_ENTER = "#>"
+TRACE_EXIT = "#<"
+_TRACED_TYPES = ("integer", "boolean")
+
+# Servicios de syscall de MARS.
+SYSCALL_PRINT_INT = 1
+SYSCALL_PRINT_STRING = 4
+SYSCALL_EXIT = 10
+SYSCALL_PRINT_CHAR = 11
 from symbol_table import WORD_SIZE
 from tac import Name, Operand, TACInstruction, TACOp
 
@@ -116,13 +149,25 @@ class FunctionTranslator:
       recibe la función completa (prólogo + cuerpo + epílogo).
 
     En el código global (fuera de toda función) también se usan
-    ``translate_param`` y ``translate_call``."""
+    ``translate_param`` y ``translate_call``; al final, ``main_program``
+    envuelve las líneas del código global y ``data_lines`` da el área global.
 
-    def __init__(self, model: FrameModel, registers: RegisterAllocator) -> None:
+    ``trace=True`` agrega la traza de activaciones (ver ``activation_tree``)."""
+
+    def __init__(self, model: FrameModel, registers: RegisterAllocator, trace: bool = False) -> None:
         self.model = model
         self.registers = registers
+        self.trace = trace
         self._frame: FrameLayout | None = None
         self._params: list[tuple[Operand, TACInstruction]] = []
+        # Etiquetas de las cadenas de la traza: (entrada, salida) por función.
+        self._trace_labels: dict[str, tuple[str, str]] = {}
+        if trace:
+            for frame in model.frames.values():
+                self._trace_labels[frame.name] = (
+                    model.labels.unique(frame.label + "_entra"),
+                    model.labels.unique(frame.label + "_sale"),
+                )
 
     # -- estado ---------------------------------------------------------------
     @property
@@ -195,10 +240,14 @@ class FunctionTranslator:
         ]
         for register in frame.saved_registers:
             lines += frame.saved_register_location(register).store(register)
+        if self.trace:
+            lines += self._trace_enter(frame)
         return lines
 
     def epilogue(self, frame: FrameLayout) -> list[str]:
         lines = [f"{frame.epilogue_label}:"]
+        if self.trace:
+            lines += self._trace_exit(frame)
         for register in frame.saved_registers:
             lines += frame.saved_register_location(register).load(register)
         lines += [
@@ -300,6 +349,75 @@ class FunctionTranslator:
             raise MipsFunctionError(str(error), instruction) from None
         setup, base = self.model.follow_access_links(hops)
         return [*setup, f"sw {base}, {location.address}"]
+
+    # -- punto de entrada y área global --------------------------------------
+    def main_program(self, body: list[str]) -> list[str]:
+        """Envuelve las líneas del código global con la entrada y la salida
+        del programa. ``main`` debe ir antes que las funciones en ``.text``:
+        MARS empieza a ejecutar en la primera instrucción."""
+        if self._frame is not None:
+            raise MipsFunctionError(f"Falta el «end_func» de «{self._frame.name}».")
+        self.ensure_no_pending_params()
+        return [
+            "# código global",
+            f".globl {MAIN_LABEL}",
+            f"{MAIN_LABEL}:",
+            f"la {GP}, {GLOBAL_AREA_LABEL}",
+            f"move {FP}, {SP}",
+            *body,
+            "# fin del programa",
+            f"li {RETURN_VALUE}, {SYSCALL_EXIT}",
+            "syscall",
+        ]
+
+    def data_lines(self) -> list[str]:
+        """Contribución de Persona 1 a ``.data``: el área global y, con
+        traza, las cadenas de entrada y salida de cada función."""
+        size = max(self.model.global_area.size, WORD_SIZE)  # .space 0 no reserva nada
+        lines = [
+            "# área global: variables y temporales del código global",
+            ".align 2",
+            f"{GLOBAL_AREA_LABEL}: .space {size}",
+        ]
+        for name, (enter, exit_) in self._trace_labels.items():
+            lines.append(f'{enter}: .asciiz "{TRACE_ENTER}{name}"')
+            lines.append(f'{exit_}: .asciiz "{TRACE_EXIT}{name}\\n"')
+        return lines
+
+    # -- traza de activaciones ------------------------------------------------
+    def _trace_enter(self, frame: FrameLayout) -> list[str]:
+        """``#>nombre a1 a2…``: los parámetros integer y boolean se imprimen;
+        los demás (cadenas, arreglos, objetos) como ``?``. ``this`` no se
+        imprime. Al entrar, ``$a0`` y ``$v0`` no tienen nada vivo."""
+        lines = ["# traza: entrada", *self._print_string(self._trace_labels[frame.name][0])]
+        for slot in frame.argument_slots:
+            if slot.role == "this":
+                continue
+            lines += self._print_char(" ")
+            if slot.type_name in _TRACED_TYPES:
+                lines += frame.slot_location(slot).load("$a0")
+                lines += [f"li {RETURN_VALUE}, {SYSCALL_PRINT_INT}", "syscall"]
+            else:
+                lines += self._print_char("?")
+        return [*lines, *self._print_char("\n")]
+
+    def _trace_exit(self, frame: FrameLayout) -> list[str]:
+        """``#<nombre``. ``$v0`` tiene el valor de retorno: se guarda en
+        ``$v1`` mientras se imprime."""
+        return [
+            "# traza: salida",
+            f"move {LINK_REGISTER}, {RETURN_VALUE}",
+            *self._print_string(self._trace_labels[frame.name][1]),
+            f"move {RETURN_VALUE}, {LINK_REGISTER}",
+        ]
+
+    @staticmethod
+    def _print_string(label: str) -> list[str]:
+        return [f"la $a0, {label}", f"li {RETURN_VALUE}, {SYSCALL_PRINT_STRING}", "syscall"]
+
+    @staticmethod
+    def _print_char(char: str) -> list[str]:
+        return [f"li $a0, {ord(char)}", f"li {RETURN_VALUE}, {SYSCALL_PRINT_CHAR}", "syscall"]
 
     # -- auxiliares -----------------------------------------------------------
     def _callee(self, target: object, instruction: TACInstruction) -> FrameLayout:

@@ -244,7 +244,26 @@ propio marco (por eso el paso 1 de la sección 3 los escribe a memoria).
     instrucción: entre los `param` y su `call` no debe haber nada más.
   - `translator.unit` dice en qué función se está (la `unit` de
     `address_of`).
-- El punto de entrada `main` (Fase 5).
+- Punto de entrada y área global: `translator.main_program(lineas_globales)`
+  envuelve el código global (`main:`, `la $gp, globales`, `move $fp, $sp`
+  y la salida con `syscall` 10) y `translator.data_lines()` da lo que va en
+  `.data` (el bloque `globales` y, con traza, sus cadenas).
+- **Orden del archivo final** (lo arma la integración):
+
+  ```text
+  .data
+      <data_lines() de Persona 1> <cadenas y datos de Persona 2/3>
+  .text
+      <main_program(...)>        ← main va primero: MARS empieza en la primera instrucción
+      <cada función completa>    ← lo que devuelve end_function
+  ```
+- Árbol de activación: `FunctionTranslator(model, regs, trace=True)` hace
+  que cada función imprima `#>nombre args` al entrar y `#<nombre` al salir;
+  `activation_tree.build_activation_tree(salida)` arma el árbol y
+  `render_activation_tree(arbol)` lo dibuja en texto (para mostrarlo en el
+  IDE). `strip_trace(salida)` deja sólo lo que imprimió el programa. Sin
+  `trace` el código no cambia.
+- Detalle en [docs/REGISTROS_ACTIVACION.md](docs/REGISTROS_ACTIVACION.md).
 - **Formato de las líneas** (para todos): cada parte devuelve listas de
   cadenas sin sangría; una etiqueta termina en `:` y un comentario empieza
   con `#`. La sangría la pone quien escribe el archivo final.
@@ -263,7 +282,8 @@ propio marco (por eso el paso 1 de la sección 3 los escribe a memoria).
 | `saved_registers(unit)` | Registros `$s` que usó esa función |
 
 - No asignar `$v1`, `$a0-$a3` (salvo para `syscall`), `$gp`, `$sp`, `$fp` ni
-  `$ra`.
+  `$ra`. `$v0` y `$a0` no conservan nada a través de una llamada (la traza
+  los usa al entrar a cada función).
 - En las pruebas de Persona 1 hay un doble de prueba de este contrato
   (`tests/mips_doubles.py`, `MemoryRegisters`) que deja todo en memoria;
   sirve de ejemplo mínimo.
@@ -287,5 +307,12 @@ propio marco (por eso el paso 1 de la sección 3 los escribe a memoria).
   tenga la misma firma. Si cambian los tipos de los parámetros (`boolean`
   ocupa 1 byte e `integer` 4), con `jalr` los argumentos quedarían en
   desplazamientos distintos.
-- **Simulador:** MARS es un `.jar`; hay que tener Java instalado para correrlo
-  y para las pruebas de ejecución.
+- **Simulador:** MARS es un `.jar`; hay que tener Java instalado y copiar
+  `Mars4_5.jar` en `tools/`. Con eso `tests/test_mips_mars.py` deja de
+  omitirse. Mientras tanto, las pruebas de ejecución de Persona 1 usan un
+  simulador mínimo (`tests/mips_doubles.py`).
+- **Dobles de prueba:** `tests/mips_doubles.py` tiene versiones mínimas de la
+  asignación de registros y de algunas instrucciones de Persona 2 y 3, sólo
+  para que las pruebas de Persona 1 puedan ejecutar programas. No son el
+  código real de nadie; cuando estén las implementaciones reales, las pruebas
+  pueden pasar a usarlas.

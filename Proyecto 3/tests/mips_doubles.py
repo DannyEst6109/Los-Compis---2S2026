@@ -1,4 +1,4 @@
-"""Dobles de prueba y mini simulador para las pruebas de Persona 1.
+"""Dobles de prueba y simuladores para las pruebas de Persona 1.
 
 Nada de esto es código del compilador. Sustituye, sólo dentro de las
 pruebas, las partes que todavía no existen:
@@ -9,17 +9,28 @@ pruebas, las partes que todavía no existen:
 * ``OtherOperations``: una traducción mínima de las instrucciones TAC de
   Persona 2 y 3 (asignación, aritmética, comparaciones, saltos y ``print``),
   suficiente para ejecutar programas con funciones.
-* ``Translation``: el recorrido del TAC que hará la integración (Persona 3).
+* ``Translation``: el recorrido del TAC y el armado del archivo que hará la
+  integración (Persona 3).
 * ``TinyMips``: un simulador de las pocas instrucciones MIPS que aparecen
-  aquí. Es estricto: falla al leer memoria nunca escrita, al acceder a una
-  palabra desalineada o al saltar a una etiqueta que no existe. Las pruebas
-  finales se harán en MARS.
+  aquí. Es estricto: falla al leer de la pila memoria nunca escrita, al
+  acceder a una palabra desalineada o al saltar a una etiqueta que no existe.
+* ``run_mars``: ejecuta un programa en MARS por línea de comandos, si hay
+  Java y un ``tools/Mars*.jar``.
+
+También sirve para generar un ``.asm`` y abrirlo en MARS a mano::
+
+    python tests/mips_doubles.py examples/08_recursividad.cps salida.asm
+    python tests/mips_doubles.py programa.cps salida.asm --traza
 """
 
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -39,6 +50,11 @@ VALID_EXAMPLES = sorted(
 def instructions(lines: list[str]) -> list[str]:
     """Sin comentarios ni marcas del doble de prueba."""
     return [line for line in lines if not line.startswith("#")]
+
+
+# ---------------------------------------------------------------------------
+# Dobles de las otras partes
+# ---------------------------------------------------------------------------
 
 
 class MemoryRegisters:
@@ -79,16 +95,21 @@ class MemoryRegisters:
         return self.saved.get(unit, [])
 
 
+class UnsupportedByDouble(NotImplementedError):
+    """Instrucción de Persona 2 o 3 que el doble de prueba no traduce."""
+
+
 class OtherOperations:
     """Traducción mínima de las instrucciones de Persona 2 y 3, sólo para
-    poder ejecutar los programas de prueba en ``TinyMips``."""
+    poder ejecutar los programas de prueba."""
 
     _ARITHMETIC = {TACOp.ADD: "addu", TACOp.SUB: "subu", TACOp.MUL: "mul"}
+    _IGNORED = {TACOp.METHOD_LOAD}  # sólo se usa en pruebas de estructura
 
     def __init__(self, registers: MemoryRegisters) -> None:
         self.registers = registers
 
-    def translate(self, instruction: TACInstruction, unit: str | None) -> list[str] | None:
+    def translate(self, instruction: TACInstruction, unit: str | None) -> list[str]:
         op, regs = instruction.op, self.registers
         load = lambda operand, register: regs.load_into(operand, unit, register)  # noqa: E731
         store = lambda register: regs.assign_from(instruction.result, unit, register)  # noqa: E731
@@ -112,8 +133,12 @@ class OtherOperations:
         if op is TACOp.LABEL:
             return [f"{instruction.result}:"]
         if op is TACOp.PRINT:
-            return [*load(a, "$a0"), "li $v0, 1", "syscall"]
-        return None
+            return [*load(a, "$a0"), "li $v0, 1", "syscall", "li $a0, 10", "li $v0, 11", "syscall"]
+        if op in self._IGNORED:
+            return []
+        raise UnsupportedByDouble(
+            f"«{str(instruction).strip()}» es de Persona 2 o 3 y el doble de prueba no la traduce."
+        )
 
 
 class Translation:
@@ -128,13 +153,14 @@ class Translation:
         source: str,
         saved: dict[str, list[str]] | None = None,
         run_others: bool = False,
+        trace: bool = False,
     ) -> None:
         result = compile_source(source)
         assert result.succeeded, result.diagnostics
         self.tac = result.tac
         self.model = FrameModel(result.symbol_table)
         self.registers = MemoryRegisters(self.model, saved)
-        self.translator = FunctionTranslator(self.model, self.registers)
+        self.translator = FunctionTranslator(self.model, self.registers, trace=trace)
         others = OtherOperations(self.registers) if run_others else None
         self.functions: dict[str, list[str]] = {}
         self.main: list[str] = []
@@ -162,10 +188,9 @@ class Translation:
             else:
                 if op is TACOp.METHOD_LOAD:  # lo que hará Persona 3
                     methods[instruction.result] = self.method_frame(instruction)
-                lines = others.translate(instruction, self.translator.unit) if others else None
                 out.append(f"# {str(instruction).strip()}")
-                if lines is not None:
-                    out += lines
+                if others is not None:
+                    out += others.translate(instruction, self.translator.unit)
 
     def method_frame(self, instruction: TACInstruction):
         receiver, method = instruction.arg1, instruction.arg2.name
@@ -196,12 +221,27 @@ class Translation:
         return self.calls_to(label, caller)[0]
 
     def program(self) -> list[str]:
-        """Programa completo para ``TinyMips``: código global, salida y
-        funciones. (El ``main`` definitivo es la Fase 5.)"""
-        lines = [*self.main, "li $v0, 10", "syscall"]
+        """Programa completo, en el orden que debe tener el archivo: datos,
+        ``main`` y después las funciones."""
+        lines = [".data", *self.translator.data_lines(), ".text", *self.translator.main_program(self.main)]
         for function in self.functions.values():
             lines += function
         return lines
+
+
+def format_assembly(lines: list[str]) -> str:
+    """Texto del archivo ``.asm``: etiquetas y directivas de sección al
+    margen, el resto con sangría."""
+    out = []
+    for line in lines:
+        flush = line.endswith(":") or line in (".data", ".text") or re.match(r"^[\w.$]+: \.", line)
+        out.append(line if flush else f"    {line}")
+    return "\n".join(out) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Simulador mínimo
+# ---------------------------------------------------------------------------
 
 
 class SimulationError(Exception):
@@ -212,28 +252,68 @@ class TinyMips:
     """Simulador mínimo de MIPS para las pruebas (no reemplaza a MARS)."""
 
     STACK_TOP = 0x7FFFEFFC  # valor inicial de $sp en MARS
-    GLOBALS = 0x10010000
+    DATA = 0x10010000  # inicio de .data en MARS
 
     _MEMORY = re.compile(r"^(-?\d+)\((\$\w+)\)$")
+    _LABEL = re.compile(r"^([A-Za-z_][\w.$]*):\s*(.*)$")
+    _ESCAPES = {"n": "\n", "t": "\t", "\\": "\\", '"': '"', "0": "\0"}
 
-    def __init__(self, lines: list[str], max_steps: int = 500_000) -> None:
+    def __init__(self, lines: list[str], max_steps: int = 2_000_000) -> None:
         self.code: list[tuple[str, list[str]]] = []
         self.labels: dict[str, int] = {}
-        for line in lines:
-            line = line.split("#", 1)[0].strip()
-            if not line:
-                continue
-            if line.endswith(":"):
-                self.labels[line[:-1]] = len(self.code)
-                continue
-            op, _, rest = line.partition(" ")
-            self.code.append((op, [arg.strip() for arg in rest.split(",")] if rest else []))
-        self.registers: dict[str, int] = {"$sp": self.STACK_TOP, "$fp": self.STACK_TOP, "$gp": self.GLOBALS}
+        self.data_labels: dict[str, int] = {}
         self.memory: dict[int, int] = {}
-        self.output: list[int] = []
+        self._load(lines)
+        self.registers: dict[str, int] = {"$sp": self.STACK_TOP, "$fp": self.STACK_TOP}
+        self.output: list[int] = []  # enteros impresos con syscall 1
+        self.text = ""  # todo lo impreso
         self.lowest_sp = self.STACK_TOP
         self.max_steps = max_steps
         self.calls = 0
+
+    def _load(self, lines: list[str]) -> None:
+        mode, pointer = ".text", self.DATA
+        for raw in lines:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line in (".data", ".text"):
+                mode = line
+                continue
+            if line.startswith(".globl"):
+                continue
+            label, directive = None, line
+            match = self._LABEL.match(line)
+            if match:
+                label, directive = match.group(1), match.group(2)
+            if mode == ".data":
+                if directive.startswith(".align"):
+                    pointer = (pointer + 3) & ~3
+                if label:
+                    self.data_labels[label] = pointer
+                if directive.startswith(".space"):
+                    size = int(directive.split()[1])
+                    for offset in range(size):
+                        self.memory[pointer + offset] = 0
+                    pointer += size
+                elif directive.startswith(".asciiz"):
+                    for char in self._string(directive) + "\0":
+                        self.memory[pointer] = ord(char)
+                        pointer += 1
+                elif directive and not directive.startswith(".align"):
+                    raise SimulationError(f"Directiva no soportada: {line}")
+                continue
+            if directive.startswith(".align"):
+                continue
+            if label:
+                self.labels[label] = len(self.code)
+            if directive:
+                op, _, rest = directive.partition(" ")
+                self.code.append((op, [arg.strip() for arg in rest.split(",")] if rest else []))
+
+    def _string(self, directive: str) -> str:
+        literal = directive[directive.index('"') + 1:directive.rindex('"')]
+        return re.sub(r"\\(.)", lambda m: self._ESCAPES.get(m.group(1), m.group(1)), literal)
 
     # -- registros y memoria
     def get(self, register: str) -> int:
@@ -276,9 +356,16 @@ class TinyMips:
             raise SimulationError(f"No existe la etiqueta {label}")
         return self.labels[label]
 
+    def string_at(self, address: int) -> str:
+        chars = []
+        while self.memory.get(address, 0) != 0:
+            chars.append(chr(self.memory[address]))
+            address += 1
+        return "".join(chars)
+
     # -- ejecución
     def run(self) -> "TinyMips":
-        pc, steps = 0, 0
+        pc, steps = self.labels.get("main", 0), 0
         while True:
             if not 0 <= pc < len(self.code):
                 raise SimulationError(f"El programa salió del código (pc={pc})")
@@ -290,6 +377,11 @@ class TinyMips:
             get, set_ = self.get, self.set
             if op == "li":
                 set_(args[0], int(args[1]))
+            elif op == "la":
+                if args[1] in self.data_labels:
+                    set_(args[0], self.data_labels[args[1]])
+                else:
+                    set_(args[0], self.target(args[1]))
             elif op == "move":
                 set_(args[0], get(args[1]))
             elif op == "addiu":
@@ -332,6 +424,11 @@ class TinyMips:
                 service = get("$v0")
                 if service == 1:
                     self.output.append(get("$a0"))
+                    self.text += str(get("$a0"))
+                elif service == 4:
+                    self.text += self.string_at(get("$a0") & 0xFFFFFFFF)
+                elif service == 11:
+                    self.text += chr(get("$a0") & 0xFF)
                 elif service == 10:
                     return self
                 else:
@@ -345,7 +442,75 @@ class TinyMips:
         return self.STACK_TOP - self.lowest_sp
 
 
-def run(source: str) -> tuple[Translation, TinyMips]:
+def run(source: str, trace: bool = False) -> tuple[Translation, TinyMips]:
     """Traduce ``source`` y lo ejecuta en ``TinyMips``."""
-    translation = Translation(source, run_others=True)
+    translation = Translation(source, run_others=True, trace=trace)
     return translation, TinyMips(translation.program()).run()
+
+
+# ---------------------------------------------------------------------------
+# MARS
+# ---------------------------------------------------------------------------
+
+
+def mars_command() -> list[str] | None:
+    """``java -jar tools/Mars*.jar`` si hay Java y el .jar; si no, ``None``."""
+    java = shutil.which("java")
+    jars = sorted((PROJECT / "tools").glob("[Mm]ars*.jar"))
+    return [java, "-jar", str(jars[-1])] if java and jars else None
+
+
+@dataclass
+class MarsResult:
+    output: str  # lo que imprimió el programa
+    registers: dict[str, int]  # valor final de los registros pedidos
+    returncode: int
+    stderr: str
+
+
+def run_mars(lines: list[str], registers: tuple[str, ...] = ("$sp", "$fp"), timeout: int = 60) -> MarsResult:
+    """Ensambla y ejecuta el programa en MARS (modo línea de comandos).
+
+    Opciones de MARS: ``nc`` sin aviso de copyright, ``sm`` empieza en
+    ``main``, ``dec`` registros en decimal, ``ae2``/``se1`` código de salida
+    distinto de 0 si falla el ensamblado o la simulación; los nombres de
+    registro se imprimen con su valor al terminar."""
+    command = mars_command()
+    if command is None:
+        raise RuntimeError("Se necesita Java y un tools/Mars*.jar para ejecutar MARS.")
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "programa.asm"
+        path.write_text(format_assembly(lines), encoding="utf-8")
+        process = subprocess.run(
+            [*command, "nc", "sm", "dec", "ae2", "se1", *registers, str(path)],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    values: dict[str, int] = {}
+    output_lines = []
+    for line in process.stdout.splitlines():
+        match = re.match(r"^\s*(\$\w+)\s+(-?(?:0x)?[0-9a-fA-F]+)\s*$", line)
+        if match and match.group(1) in registers:
+            values[match.group(1)] = int(match.group(2), 0)
+        else:
+            output_lines.append(line)
+    return MarsResult("\n".join(output_lines).strip("\n"), values, process.returncode, process.stderr)
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) < 2:
+        print(__doc__)
+        return 1
+    source = Path(argv[1]).read_text(encoding="utf-8")
+    translation = Translation(source, run_others=True, trace="--traza" in argv)
+    text = format_assembly(translation.program())
+    outputs = [arg for arg in argv[2:] if not arg.startswith("--")]
+    if outputs:
+        Path(outputs[0]).write_text(text, encoding="utf-8")
+        print(f"MIPS guardado en {outputs[0]}")
+    else:
+        print(text)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
