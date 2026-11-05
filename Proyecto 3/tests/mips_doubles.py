@@ -25,6 +25,7 @@ También sirve para generar un ``.asm`` y abrirlo en MARS a mano::
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -273,6 +274,7 @@ class TinyMips:
 
     def _load(self, lines: list[str]) -> None:
         mode, pointer = ".text", self.DATA
+        words = []
         for raw in lines:
             line = raw.strip()
             if not line or line.startswith("#"):
@@ -300,6 +302,13 @@ class TinyMips:
                     for char in self._string(directive) + "\0":
                         self.memory[pointer] = ord(char)
                         pointer += 1
+                elif directive.startswith(".word "):
+                    words.append((pointer, directive.split()[1]))
+                    pointer += 4
+                elif directive.startswith(".byte "):
+                    for value in directive[6:].split(","):
+                        self.memory[pointer] = int(value) & 255
+                        pointer += 1
                 elif directive and not directive.startswith(".align"):
                     raise SimulationError(f"Directiva no soportada: {line}")
                 continue
@@ -310,6 +319,8 @@ class TinyMips:
             if directive:
                 op, _, rest = directive.partition(" ")
                 self.code.append((op, [arg.strip() for arg in rest.split(",")] if rest else []))
+        for address, value in words:
+            self.write(address, 4, self.data_labels[value] if value in self.data_labels else int(value))
 
     def _string(self, directive: str) -> str:
         literal = directive[directive.index('"') + 1:directive.rindex('"')]
@@ -454,8 +465,11 @@ def run(source: str, trace: bool = False) -> tuple[Translation, TinyMips]:
 
 
 def mars_command() -> list[str] | None:
-    """``java -jar tools/Mars*.jar`` si hay Java y el .jar; si no, ``None``."""
+    """Usa MARS_JAR o tools/Mars*.jar si Java está en PATH."""
     java = shutil.which("java")
+    override = os.environ.get("MARS_JAR")
+    if override:
+        return [java, "-jar", override] if java and Path(override).is_file() else None
     jars = sorted((PROJECT / "tools").glob("[Mm]ars*.jar"))
     return [java, "-jar", str(jars[-1])] if java and jars else None
 
@@ -482,8 +496,8 @@ def run_mars(lines: list[str], registers: tuple[str, ...] = ("$sp", "$fp"), time
         path = Path(folder) / "programa.asm"
         path.write_text(format_assembly(lines), encoding="utf-8")
         process = subprocess.run(
-            [*command, "nc", "sm", "dec", "ae2", "se1", *registers, str(path)],
-            capture_output=True, text=True, timeout=timeout,
+            [*command, "nc", "sm", "dec", "we", "ae2", "se1", *registers, str(path)],
+            capture_output=True, encoding="utf-8", timeout=timeout,
         )
     values: dict[str, int] = {}
     output_lines = []

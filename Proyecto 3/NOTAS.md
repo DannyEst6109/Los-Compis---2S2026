@@ -18,11 +18,11 @@ directamente desde Compiscript.
 | --- | --- |
 | Paso de argumentos | **Todos por la pila.** No se usan `$a0-$a3` para pasar argumentos |
 | Frame pointer | **Sí se usa `$fp`**, apuntando al tope del marco |
-| Valor de retorno | En `$v0` |
+| Valor de retorno | En `$v0`, con la etiqueta de impresión en `$a3` |
 | Registros que guarda el llamador | `$t0-$t9`: se escriben a memoria antes de cada `jal`/`jalr` |
 | Registros que guarda la función llamada | `$s0-$s7`: sólo los que use, en su prólogo y epílogo |
 | `$v1` | Reservado para Persona 1 (seguir enlaces de acceso). `getReg()` no lo usa |
-| `$a0-$a3` | Libres para los `syscall` (`print`, etc.) |
+| `$a0-$a3` | Auxiliares de `syscall` y de traducción local, sin valores persistentes |
 | Área global | Bloque `globales` en `.data`, apuntado por `$gp` |
 | Punto de entrada (`main`) | Lo hace Persona 1 |
 | Nombres de funciones en MIPS | Prefijo `fn_`, reservado para Persona 1 (sección 7) |
@@ -85,8 +85,9 @@ más alta) y una casilla con desplazamiento `off` y tamaño `size` está en:
   firma (ver «A tener en cuenta»), P es igual para todas, así que el llamador
   no necesita saber qué implementación se ejecutará (despacho dinámico con
   `jalr`).
-- **SIZE** = `record.size` + 4 por cada registro `$s` que guarde la función.
-  Los `$s` guardados van después de los temporales.
+- **SIZE** = `record.size` más el área de etiquetas de impresión de igual
+  tamaño y 4 bytes por cada registro `$s` guardado. Los `$s` van después
+  del área de etiquetas.
 - **Invariante:** dentro del cuerpo de una función, fuera de una secuencia de
   llamada, siempre se cumple `$sp == $fp - SIZE`. Al regresar de una llamada,
   `$sp` vuelve exactamente al valor que tenía antes de ella.
@@ -110,17 +111,19 @@ Para `param x1 … param xn` seguido de `[t =] call f, n`:
 1. **Guardar registros:** se escriben a memoria los registros modificados
    (`$t` y cualquiera que tenga variables), porque la función llamada puede
    leer globales o variables capturadas. *(Persona 2)*
-2. `addiu $sp, $sp, -P`: reserva el prefijo del registro de `f`.
+2. Reserva `P + 4*n` bytes. El prefijo ocupa `P` y las etiquetas de
+   los argumentos ocupan `4*n` por encima del nuevo `$fp`.
 3. Por cada argumento: `sw`/`sb` en `(P - off - size)($sp)`, con el `off` y
    `size` de ese parámetro en el registro de `f`. Los métodos reciben `this`
-   como primer argumento.
+   como primer argumento. Escribe también su etiqueta en `P + 4*i($sp)`.
 4. **Enlace de acceso** en `(P - 12)($sp)`:
    - `f` de nivel 1 (funciones globales y métodos): `$zero`.
    - `f` un nivel más adentro que quien llama: `$fp` actual.
    - En otro caso: el resultado de seguir `nivel(llamador) − nivel(f) + 1`
      enlaces de acceso desde `$fp` (`lw $v1, -12($fp)`, `lw $v1, -12($v1)`, …).
 5. `jal fn_f`, o `jalr $r` si el destino es un temporal de `method`.
-6. Al volver, el valor de retorno está en `$v0`; si hay destino, se asigna a
+6. Al volver, el llamador libera los `4*n` bytes de etiquetas. El valor de
+   retorno está en `$v0` y su etiqueta en `$a3`; si hay destino, se asignan a
    `t`. Lo que había en los registros ya no es válido. *(Persona 2)*
 
 ## 4. Prólogo, epílogo y `return` (lado de la función)
@@ -144,11 +147,14 @@ fn_f_fin:                           # end_func f (y destino de todo return)
 - `return x`: carga `x` en `$v0`, guarda en memoria las globales modificadas
   que estén en registros y salta a `fn_f_fin`. `return` sin valor sólo salta.
 - Llegar a `end_func` sin `return` equivale a `return` sin valor.
-- La función que llama no libera nada: `move $sp, $fp` deja `$sp` como estaba
-  antes del `addiu $sp, $sp, -P`.
+- `move $sp, $fp` libera el marco y el prefijo. El llamador libera el
+  espacio adicional de las etiquetas de los argumentos.
 - El prólogo se emite después de traducir el cuerpo, para saber qué `$s` usó.
 
-## 5. Ejemplo completo
+## 5. Ejemplo de las casillas de valores
+
+El ejemplo ilustra la convención base. El código actual agrega las
+etiquetas de impresión según las secciones 3 y 4.
 
 ```text
 function suma(a: integer, b: integer): integer { return a + b; }
@@ -198,7 +204,8 @@ propio marco (por eso el paso 1 de la sección 3 los escribe a memoria).
 | `$v0` | Valor de retorno y código de `syscall` | — |
 | `$v1` | Auxiliar de Persona 1 para seguir enlaces de acceso | — |
 | `$a0-$a3` | Argumentos de `syscall` | — |
-| `$t0-$t9` | Libres para `getReg()` | La función que llama (se escriben a memoria antes de `jal`) |
+| `$t0-$t5` | Libres para el asignador | La función que llama (se escriben a memoria antes de `jal`) |
+| `$t6-$t9` | Auxiliares de una instrucción TAC | — |
 | `$s0-$s7` | Libres para `getReg()` | La función llamada (prólogo y epílogo) |
 | `$k0`, `$k1` | Reservados del sistema | — |
 | `$gp` | Base del área global | No cambia |
@@ -307,12 +314,60 @@ propio marco (por eso el paso 1 de la sección 3 los escribe a memoria).
   tenga la misma firma. Si cambian los tipos de los parámetros (`boolean`
   ocupa 1 byte e `integer` 4), con `jalr` los argumentos quedarían en
   desplazamientos distintos.
-- **Simulador:** MARS es un `.jar`; hay que tener Java instalado y copiar
-  `Mars4_5.jar` en `tools/`. Con eso `tests/test_mips_mars.py` deja de
-  omitirse. Mientras tanto, las pruebas de ejecución de Persona 1 usan un
-  simulador mínimo (`tests/mips_doubles.py`).
+- **Simulador:** con Java en `PATH`, copia `Mars4_5.jar` en `tools/` o
+  indica su ruta en la variable `MARS_JAR`. Ejecuta
+  `python -m unittest discover -s tests` desde `Proyecto 3`.
+  Mantén desactivados los saltos retardados en MARS.
 - **Dobles de prueba:** `tests/mips_doubles.py` tiene versiones mínimas de la
   asignación de registros y de algunas instrucciones de Persona 2 y 3, sólo
   para que las pruebas de Persona 1 puedan ejecutar programas. No son el
   código real de nadie; cuando estén las implementaciones reales, las pruebas
   pueden pasar a usarlas.
+
+## Integración de Persona 2
+
+- Crear una instancia de `MipsRegisters(model)` por programa y compartirla
+  entre `FunctionTranslator` y `BasicTranslator(registers)`. Para las
+  operaciones de `mips_basic.HANDLED_OPS`, llamar a
+  `basic.translate(instruction, functions.unit)`. Incluye `PRINT`, que
+  muestra los booleanos como 0 o 1. Las operaciones `&&` y `||` ya
+  vienen como saltos TAC que conservan el cortocircuito.
+  `print(x)` usa una etiqueta que acompaña al valor, aunque el parámetro
+  carezca de anotación. La etiqueta distingue salida numérica, texto y
+  nulo. Se guarda aparte del valor y se conserva en asignaciones, llamadas,
+  retornos y elementos de arreglos. Para operaciones nuevas que produzcan
+  texto o nulo (por ejemplo, lectura de un atributo), Persona 3 debe pasar
+  la etiqueta correspondiente en `assign_from(..., tag=registro)`.
+- El asignador usa `$t0-$t5` y, dentro de funciones, también `$s0-$s7`.
+  `$t6-$t9` quedan para cálculos locales de una instrucción. Las cadenas
+  también usan `$a0` como auxiliar local. Ningún traductor debe escribir
+  directamente en los registros asignables. Para copiar hacia un registro
+  fijo, usar `load_into`; para registrar un resultado, usar `assign_from`.
+- Antes de emitir un salto, guardar los valores con `spill(unit)` y
+  descartar las asociaciones con `forget()` después de emitirlo.
+  En cada etiqueta TAC, emitir el `spill(unit)` del camino que llega por
+  continuación **antes** de la etiqueta, y descartar las asociaciones.
+  Los saltos hacia esa etiqueta ya habrán escrito sus propios valores.
+  Después de `return`, descartar las asociaciones. Si se separa código global
+  antes de `begin_func`, guardar sus valores en el bloque global antes del
+  cambio de unidad. Guardar también al final de `main`.
+- Un arreglo es un puntero a un bloque alineado. El desplazamiento 0
+  contiene la longitud y el elemento `i` está en `4 + 4*i`. Cada elemento
+  usa una palabra, incluidos los booleanos y los punteros a subarreglos.
+  Después de todas las palabras hay un byte de etiqueta por elemento.
+  `LENGTH` e `INDEX_LOAD` ya cubren las lecturas de `foreach`.
+- Una cadena apunta a una palabra con su longitud en bytes, seguida del
+  contenido UTF-8 y un byte cero que lee MARS al imprimir. En el
+  desplazamiento -4 tiene un enlace a otra cadena. Los literales y los
+  resultados de concatenación comparten una sola dirección por contenido,
+  así que la igualdad funciona también con parámetros sin anotación. Agregar
+  `registers.data_lines()` a `.data` **después de traducir todo el TAC**.
+  Usar `.align 2` antes de tablas de palabras que sigan a esas cadenas.
+- Para conectar `try/catch`, pasar `fault_label` a `BasicTranslator`.
+  Ante división por cero, cadena nula en concatenación o acceso inválido
+  a un arreglo, el traductor guarda los valores modificados y salta al
+  manejador con el puntero de la cadena del diagnóstico en `$a0`.
+  Sin manejador, imprime el diagnóstico y termina el programa.
+- Aplicar `mips_peephole.optimize_mips(lines)` al archivo completo antes
+  de darle sangría. La prueba `tests/test_mips_basic.py` muestra cómo
+  conectar los módulos con funciones y saltos de prueba.
