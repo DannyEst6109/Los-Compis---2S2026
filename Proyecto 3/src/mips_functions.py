@@ -87,6 +87,7 @@ SYSCALL_PRINT_STRING = 4
 SYSCALL_EXIT = 10
 SYSCALL_PRINT_CHAR = 11
 from symbol_table import WORD_SIZE
+from mips_registers import MipsRegisters, RETURN_TAG
 from tac import Name, Operand, TACInstruction, TACOp
 
 # Operaciones del TAC que traduce este módulo.
@@ -157,6 +158,7 @@ class FunctionTranslator:
     def __init__(self, model: FrameModel, registers: RegisterAllocator, trace: bool = False) -> None:
         self.model = model
         self.registers = registers
+        self.typed_registers = registers if isinstance(registers, MipsRegisters) else None
         self.trace = trace
         self._frame: FrameLayout | None = None
         self._params: list[tuple[Operand, TACInstruction]] = []
@@ -222,6 +224,8 @@ class FunctionTranslator:
             raise MipsFunctionError(f"«end_func» no corresponde a la función abierta «{frame.name}».", instruction)
         self.ensure_no_pending_params(instruction)
         fall_through = list(self.registers.spill(frame.name))
+        if self.typed_registers is not None:
+            fall_through.append(f"move {RETURN_TAG}, $zero")
         frame.use_saved_registers(self.registers.saved_registers(frame.name))
         lines = [*self.prologue(frame), *body, *fall_through, *self.epilogue(frame)]
         self.registers.forget()
@@ -268,6 +272,10 @@ class FunctionTranslator:
         lines = [f"# {str(instruction).strip()}", *self.registers.spill(frame.name)]
         if instruction.arg1 is not None:
             lines += self.registers.load_into(instruction.arg1, frame.name, RETURN_VALUE)
+            if self.typed_registers is not None:
+                lines += self.typed_registers.load_type(instruction.arg1, frame.name, RETURN_TAG)
+        elif self.typed_registers is not None:
+            lines.append(f"move {RETURN_TAG}, $zero")
         lines.append(f"j {frame.epilogue_label}")
         return lines
 
@@ -312,11 +320,15 @@ class FunctionTranslator:
 
         unit = self.unit
         lines = [f"# {str(instruction).strip()}", *self.registers.spill(unit)]
-        lines.append(f"addiu {SP}, {SP}, -{callee.prefix_size}")
-        for (operand, _), location in zip(arguments, slots):
+        tag_size = WORD_SIZE * count if self.typed_registers is not None else 0
+        lines.append(f"addiu {SP}, {SP}, -{callee.prefix_size + tag_size}")
+        for index, ((operand, _), location) in enumerate(zip(arguments, slots)):
             code, register = self.registers.value_register(operand, unit)
             lines += code
             lines.append(f"{location.store_op} {register}, {location.address}")
+            if self.typed_registers is not None:
+                lines += self.typed_registers.load_type(operand, unit, RETURN_TAG)
+                lines.append(f"sb {RETURN_TAG}, {callee.prefix_size + index * WORD_SIZE}({SP})")
         lines += self.access_link(callee, instruction)
         if isinstance(target, Name):
             lines.append(f"jal {callee.label}")
@@ -327,8 +339,13 @@ class FunctionTranslator:
         # Al volver, $sp ya está como antes del addiu y los registros
         # pudieron cambiar dentro de la función llamada.
         self.registers.forget()
+        if tag_size:
+            lines.append(f"addiu {SP}, {SP}, {tag_size}")
         if instruction.result is not None:
-            lines += self.registers.assign_from(instruction.result, unit, RETURN_VALUE)
+            if self.typed_registers is not None:
+                lines += self.typed_registers.assign_from(instruction.result, unit, RETURN_VALUE, tag=RETURN_TAG)
+            else:
+                lines += self.registers.assign_from(instruction.result, unit, RETURN_VALUE)
         return lines
 
     def access_link(self, callee: FrameLayout, instruction: TACInstruction | None = None) -> list[str]:
@@ -373,7 +390,8 @@ class FunctionTranslator:
     def data_lines(self) -> list[str]:
         """Contribución de Persona 1 a ``.data``: el área global y, con
         traza, las cadenas de entrada y salida de cada función."""
-        size = max(self.model.global_area.size, WORD_SIZE)  # .space 0 no reserva nada
+        multiplier = 2 if self.typed_registers is not None else 1
+        size = max(multiplier * self.model.global_area.size, WORD_SIZE)
         lines = [
             "# área global: variables y temporales del código global",
             ".align 2",

@@ -129,6 +129,7 @@ class FrameLayout:
     label: str
     epilogue_label: str
     saved_registers: tuple[str, ...] = ()
+    typed_values: bool = False
 
     @property
     def name(self) -> str:
@@ -154,7 +155,11 @@ class FrameLayout:
     @property
     def size(self) -> int:
         """Tamaño total del marco: el registro más los ``$s`` guardados."""
-        return self.record.size + WORD_SIZE * len(self.saved_registers)
+        return self.local_size + WORD_SIZE * len(self.saved_registers)
+
+    @property
+    def local_size(self) -> int:
+        return self.record.size * (2 if self.typed_values else 1)
 
     def use_saved_registers(self, registers) -> None:
         """Registra qué ``$s`` usa la función (los guarda su prólogo)."""
@@ -176,7 +181,7 @@ class FrameLayout:
     def saved_register_location(self, register: str) -> MemoryLocation:
         if register not in self.saved_registers:
             raise MipsFrameError(f"{self.name} no guarda {register}.")
-        offset = self.record.size + WORD_SIZE * self.saved_registers.index(register)
+        offset = self.local_size + WORD_SIZE * self.saved_registers.index(register)
         return MemoryLocation(FP, frame_offset(offset, WORD_SIZE), WORD_SIZE)
 
     @property
