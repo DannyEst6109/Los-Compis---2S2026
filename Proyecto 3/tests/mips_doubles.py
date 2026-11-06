@@ -41,7 +41,7 @@ if str(PROJECT / "src") not in sys.path:
 from compiler import compile_source  # noqa: E402
 from mips_frames import FrameModel  # noqa: E402
 from mips_functions import FunctionTranslator  # noqa: E402
-from tac import Const, TACInstruction, TACOp, Temp, Var  # noqa: E402
+from tac import Const, TACInstruction, TACOp, Temp  # noqa: E402
 
 VALID_EXAMPLES = sorted(
     path for path in (PROJECT / "examples").glob("*.cps") if "errores" not in path.name
@@ -194,17 +194,12 @@ class Translation:
                     out += others.translate(instruction, self.translator.unit)
 
     def method_frame(self, instruction: TACInstruction):
-        receiver, method = instruction.arg1, instruction.arg2.name
-        layouts = self.model.table.class_layouts
-        symbol = getattr(receiver, "symbol", None)
-        if symbol is not None:
-            layout = layouts[symbol.runtime_type or symbol.type_name]
-        elif isinstance(receiver, Var):  # this: la clase de la función actual
-            layout = layouts[self.translator.unit.split(".")[0]]
-        else:  # receptor temporal: cualquier clase con ese método (mismo prefijo)
-            layout = next(item for item in layouts.values() if item.method_index(method) is not None)
-        label = layout.vtable[layout.method_index(method)][1]
-        return self.model.frame(label)
+        """Marco del método de ``t = method o.m``. Usa la resolución real de
+        Persona 3 (``mips_objects``): clase estática anotada en el TAC o, si
+        no se conoce, la firma común de todas las implementaciones."""
+        from mips_objects import ObjectTranslator
+
+        return ObjectTranslator(self.model, None, None).method_access(instruction.arg2, instruction).frame
 
     def calls_from(self, caller: str | None) -> list[list[str]]:
         """Llamadas hechas desde la función ``caller`` (``None``: código global)."""

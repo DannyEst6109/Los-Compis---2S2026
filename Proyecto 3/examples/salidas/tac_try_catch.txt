@@ -1,0 +1,4 @@
+Error atrapado: Índice de arreglo fuera de rango
+externo: Índice de arreglo fuera de rango
+División por cero
+0

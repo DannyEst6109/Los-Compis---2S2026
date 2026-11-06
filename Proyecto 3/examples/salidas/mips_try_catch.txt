@@ -1,0 +1,12 @@
+1: Índice de arreglo fuera de rango
+2: División por cero
+3: Acceso a un objeto nulo
+20
+2
+5
+5: División por cero
+-1
+6a: Índice de arreglo fuera de rango
+6b: División por cero
+100
+3628800

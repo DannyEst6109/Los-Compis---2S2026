@@ -1,0 +1,2 @@
+Error atrapado: Índice de arreglo fuera de rango
+No se pudo dividir: División por cero

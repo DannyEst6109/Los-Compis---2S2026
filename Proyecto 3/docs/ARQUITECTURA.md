@@ -1,4 +1,4 @@
-# Arquitectura del Proyecto 1
+# Arquitectura del compilador (Proyectos 1, 2 y 3)
 
 ## Objetivo y límites
 
@@ -165,12 +165,41 @@ Visitor sobre el mismo AST. El diseño está en [TAC.md](TAC.md),
 [FUNCIONES_ENTORNOS.md](FUNCIONES_ENTORNOS.md), que incluye el diagrama
 completo del pipeline.
 
+### Generación de código ensamblador MIPS (Proyecto 3)
+
+Sólo si el TAC se generó sin errores, `compiler.compile_source` llama a
+`mips_generator.generate_mips(tabla, tac)`, que traduce **ese mismo TAC** a
+MIPS32 para MARS:
+
+```text
+TAC + tabla de símbolos con direcciones
+        |
+        v
+MipsGenerator ──► FunctionTranslator (Persona 1: marcos, llamadas, main)
+        │      ──► BasicTranslator + MipsRegisters (Persona 2: getReg, aritmética, arreglos, print)
+        │      ──► ControlFlowTranslator, ObjectTranslator, ExceptionTranslator (Persona 3)
+        v
+.data + .text + rutinas de soporte ──► mirilla (Persona 2 + Persona 3) ──► MipsProgram
+        |
+        v
+CompilationResult.mips ──► pestañas «MIPS» y «Ejecución» del IDE, compilar.py, MARS
+```
+
+Un error de generación (por ejemplo, una redefinición de método con otra
+firma) se reporta como diagnóstico de «Generación» y no se entrega
+ensamblador parcial. La convención entre las partes está en
+[NOTAS.md](../NOTAS.md); el diseño en
+[REGISTROS_ACTIVACION.md](REGISTROS_ACTIVACION.md) (Persona 1) y
+[MIPS_PERSONA3.md](MIPS_PERSONA3.md) (Persona 3).
+
 ### `ui.py`
 
-Mantiene el editor y la tabla de diagnósticos del Laboratorio 1. El inspector derecho tiene cinco pestañas:
+Mantiene el editor y la tabla de diagnósticos del Laboratorio 1. El inspector derecho tiene siete pestañas (las de MIPS y Ejecución están en `ui_mips.py`):
 
 - **Diagnósticos:** léxicos, sintácticos, semánticos y de generación combinados y ordenados por ubicación, con color distinto por tipo.
-- **Código intermedio:** el TAC generado, con resaltado; un clic en una instrucción resalta su línea de origen.
+- **TAC:** el código intermedio generado, con resaltado; un clic en una instrucción resalta su línea de origen.
+- **MIPS:** el ensamblador generado, con las estadísticas de la mirilla, la vista sin optimizar, «Copiar» y «Guardar .asm».
+- **Ejecución:** ejecuta el programa en MARS (`F6`, en segundo plano) y muestra su salida y el árbol de activación.
 - **AST:** jerarquía del AST, resumen, ubicación y controles para expandir o contraer.
 - **Símbolos:** jerarquía real de `Scope` (global → función/bloque/clase → símbolos), con dirección y tamaño de cada símbolo y salto a la declaración en el editor.
 - **Entornos:** área global, registros de activación y distribución de cada clase con su vtable.
@@ -197,4 +226,5 @@ Para ejecutar toda la batería:
 python -m unittest discover -s tests -v
 ```
 
-Las pruebas deben ejecutarse desde la carpeta `Proyecto 2`.
+Las pruebas deben ejecutarse desde la carpeta `Proyecto 3`. Las que usan
+MARS necesitan Java y `tools/Mars4_5.jar` (o la variable `MARS_JAR`).

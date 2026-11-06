@@ -1,113 +1,165 @@
-# Proyecto 2 - Generación de código intermedio de Compiscript
+# Proyecto 3 - Generación de código ensamblador MIPS para Compiscript
 
-Compilador de Compiscript con IDE de escritorio. Realiza el análisis léxico y
-sintáctico (ANTLR, heredado del Laboratorio 1), construye el AST, la tabla de
-símbolos y el análisis semántico (Proyecto 1), y para los programas sin
-errores genera código de tres direcciones (TAC) junto con las
-direcciones de memoria y los registros de activación de cada función.
+Compilador completo de Compiscript con IDE de escritorio. Realiza el análisis
+léxico y sintáctico (ANTLR, Laboratorio 1), el análisis semántico (Proyecto
+1) y la generación de código intermedio TAC (Proyecto 2), y **a partir de ese
+TAC** genera código ensamblador **MIPS32** que se ejecuta en el simulador
+**MARS 4.5**. El código generado pasa por una optimización por mirilla.
 
 | Documento | Contenido |
 | --- | --- |
-| [docs/TAC.md](docs/TAC.md) | Especificación del lenguaje intermedio, traducción de expresiones y reciclaje de temporales |
-| [docs/CONTROL_FLUJO.md](docs/CONTROL_FLUJO.md) | Traducción de condiciones, ciclos, `switch`, `break` y `continue` |
-| [docs/FUNCIONES_ENTORNOS.md](docs/FUNCIONES_ENTORNOS.md) | Funciones, recursión, registros de activación, tabla de símbolos extendida, clases, herencia, `try/catch` e integración |
-| [docs/ARQUITECTURA.md](docs/ARQUITECTURA.md) | Arquitectura de las fases de análisis |
+| [NOTAS.md](NOTAS.md) | Convención de llamadas, uso de registros e interfaz entre las tres partes |
+| [docs/REGISTROS_ACTIVACION.md](docs/REGISTROS_ACTIVACION.md) | Registros de activación, secuencias de llamada y retorno, recursividad y árboles de activación |
+| [docs/MIPS_PERSONA3.md](docs/MIPS_PERSONA3.md) | Control de flujo, clases, herencia, `try/catch`, integración, mirilla de control de flujo, IDE y simulador |
+| [docs/TAC.md](docs/TAC.md), [docs/CONTROL_FLUJO.md](docs/CONTROL_FLUJO.md), [docs/FUNCIONES_ENTORNOS.md](docs/FUNCIONES_ENTORNOS.md) | Lenguaje intermedio (Proyecto 2) |
+| [docs/ARQUITECTURA.md](docs/ARQUITECTURA.md) | Arquitectura de todas las fases |
+
+## Requisitos
+
+- Python 3.11 o superior (incluye Tkinter). El runtime de ANTLR ya viene en
+  `src/vendor`; no hay que instalar dependencias.
+- Java 8 o superior, sólo para **ejecutar** el ensamblador en MARS desde el
+  IDE, la línea de comandos o las pruebas. `tools/Mars4_5.jar` ya está
+  incluido (también se puede indicar otro con la variable `MARS_JAR`).
 
 ## Ejecución
 
-Requiere Python 3.11 o superior (incluye Tkinter). El runtime de ANTLR ya
-viene en `src/vendor`, así que no hace falta instalar dependencias.
-
-En Windows:
+### IDE
 
 ```powershell
-.\iniciar.ps1
+.\iniciar.ps1           # o: python src\app.py   (desde la carpeta Proyecto 3)
 ```
 
-También puede iniciarse directamente desde la carpeta `Proyecto 2`:
+1. **Abrir** (`Ctrl+O`) un archivo `.cps` o escribir el programa en el editor.
+2. **Compilar** (`F5`).
+3. Si hay errores, **Diagnósticos** los lista todos (léxicos, sintácticos,
+   semánticos y de generación) y **no se genera TAC ni ensamblador**. Doble
+   clic en un diagnóstico lleva a su línea.
+4. Si no hay errores:
+   - **TAC**: el código intermedio; un clic en una instrucción resalta la
+     línea que la originó. **Guardar .tac** y **Copiar**.
+   - **MIPS**: el ensamblador generado (cada bloque lleva como comentario la
+     instrucción TAC que traduce), cuántas instrucciones quitó la mirilla y
+     con qué reglas, **Ver sin optimizar**, **Copiar** y **Guardar .asm**.
+   - **Ejecución** (`F6`): ejecuta el programa en MARS y muestra su salida y
+     el **árbol de activación** de esa ejecución.
+   - **AST**, **Símbolos** y **Entornos** (registros de activación, área
+     global y distribución de cada clase con su vtable).
+
+### Línea de comandos
 
 ```powershell
-python src\app.py
+python src\compilar.py examples\mips_herencia.cps                  # crea examples\mips_herencia.asm
+python src\compilar.py programa.cps -o salida.asm --tac            # también guarda el .tac
+python src\compilar.py programa.cps --ejecutar --arbol             # lo ejecuta en MARS y dibuja el árbol
+python src\compilar.py programa.cps --sin-optimizar                # sin mirilla
 ```
 
-### Uso del IDE
+### En MARS, a mano
 
-1. Abra un archivo `.cps` (**Abrir**, `Ctrl+O`) o escriba el programa en el editor.
-2. Presione **Compilar** (`F5`).
-3. Si hay errores, la pestaña **Diagnósticos** los lista todos (léxicos,
-   sintácticos y semánticos) ordenados por ubicación y no se genera código
-   intermedio. Doble clic en un diagnóstico lleva a su línea.
-4. Si no hay errores, se abre **Código intermedio** con el TAC. Un clic en
-   una instrucción resalta la línea de código que la originó; **Copiar** y
-   **Guardar .tac** exportan el resultado.
-5. **AST**, **Símbolos** (con dirección y tamaño de cada símbolo) y
-   **Entornos** (registros de activación, área global y distribución de las
-   clases con su vtable) muestran las estructuras internas.
-
-Los archivos de `examples/` sirven para probarlo: los `valido_*` y `tac_*`
-(sin «errores» en el nombre) compilan; los `errores_*` y
-`tac_*_errores` reportan varios errores sin generar TAC.
+Abrir el `.asm` en MARS 4.5 (*File → Open*), ensamblar (*Run → Assemble*,
+`F3`) y ejecutar (*Run → Go*, `F5`). *Settings → Delayed branching* debe
+estar desactivado (valor por defecto). La salida aparece en la consola *Run
+I/O*. También por consola: `java -jar tools\Mars4_5.jar nc sm programa.asm`.
 
 ## Pruebas
 
 ```powershell
-python -m unittest discover -s tests -v
+python -m unittest discover -s tests -v      # o: .\verificar.bat
 ```
+
+511 pruebas. Las que ejecutan MARS se omiten automáticamente si no hay Java.
+Además de comparar la salida, verifican que `$sp` y `$fp` terminen en el
+tope de la pila.
 
 | Archivo | Cubre |
 | --- | --- |
-| `test_analyzer.py`, `test_ast.py` | Recuperación léxica y sintáctica, construcción del AST, Visitor y visualización |
-| `test_symbol_table.py` | Ámbitos, shadowing, duplicados, no declarados, recursión, closures, clases |
-| `test_semantic_analyzer.py` | Tipos, control de flujo, funciones, clases, listas, código muerto |
-| `test_tac.py`, `test_temporaries.py`, `test_tac_expressions.py` | Instrucciones TAC, reciclaje de temporales y expresiones |
-| `test_tac_control_flow.py` | Condiciones, cortocircuito, ciclos, `switch`, `break` y `continue` |
-| `test_memory_layout.py` | Tabla de símbolos extendida: direcciones, tamaños, entornos y registros de activación |
-| `test_tac_functions.py` | Funciones, parámetros, `return`, llamadas y recursión |
-| `test_tac_objects.py` | Clases, objetos, herencia y despacho dinámico |
-| `test_tac_try_catch.py` | `try/catch` |
-| `test_compiler.py` | Integración completa sobre todos los ejemplos válidos e inválidos |
+| `test_analyzer.py`, `test_ast.py`, `test_symbol_table.py`, `test_semantic_analyzer.py` | Análisis léxico, sintáctico y semántico, recuperación de errores |
+| `test_tac*.py`, `test_temporaries.py`, `test_memory_layout.py`, `test_compiler.py`, `test_examples_rubrica.py` | Código intermedio y entornos (Proyecto 2) |
+| `test_mips_frames.py`, `test_mips_functions.py`, `test_mips_runtime.py`, `test_mips_program.py`, `test_activation_tree.py`, `test_mips_mars.py` | Registros de activación, llamadas, recursividad y árboles de activación (Persona 1) |
+| `test_mips_basic.py` | Asignación de registros, variables, expresiones, arreglos y mirilla local (Persona 2) |
+| `test_mips_control.py` | Sentencias de control (Persona 3) |
+| `test_mips_objects.py` | Clases, objetos y herencia (Persona 3) |
+| `test_mips_exceptions.py` | `try/catch` (Persona 3) |
+| `test_mips_peephole_control.py` | Mirilla de control de flujo (Persona 3) |
+| `test_mips_integration.py` | Pipeline completo, todos los ejemplos en MARS, línea de comandos e IDE (Persona 3) |
 
-## Estado actual
+## Ejemplos
 
-| Componente | Estado |
+Cada archivo válido tiene su salida esperada en `examples/salidas/` (la
+prueba `test_every_valid_example_runs_in_mars_with_the_expected_output` los
+ejecuta todos en MARS). Los ejemplos `NN_*` y `mips_*` traen al final un caso
+de error comentado: al quitarle el `//` el programa debe fallar sin generar
+código.
+
+| Archivo | Muestra |
 | --- | --- |
-| Analizador léxico y sintáctico (heredado del Lab. 1) | Completo |
-| AST, tabla de símbolos y análisis semántico (Proyecto 1) | Completo |
-| TAC de expresiones y reciclaje de temporales | Completo; `docs/TAC.md` |
-| TAC de control de flujo y cortocircuito | Completo; `docs/CONTROL_FLUJO.md` |
-| TAC de funciones, parámetros, llamadas y recursión | Completo; `docs/FUNCIONES_ENTORNOS.md` |
-| TAC de clases, objetos, herencia y `try/catch` | Completo; `docs/FUNCIONES_ENTORNOS.md` |
-| Tabla de símbolos con direcciones y registros de activación | Completo; `docs/FUNCIONES_ENTORNOS.md` |
-| IDE con TAC, símbolos y entornos | Completo |
+| `mips_basicos.cps` | Variables, constantes, expresiones aritméticas y lógicas, arreglos |
+| `mips_control_flujo.cps` | `if/else` anidados, `while`, `do-while`, `for`, `foreach`, `switch` con fall-through, `break`, `continue`, ternario, cortocircuito |
+| `mips_funciones_recursion.cps` | Parámetros (más de cuatro), recursión simple y doble, funciones anidadas; ver su árbol en «Ejecución» |
+| `mips_clases_objetos.cps` | Objetos, atributos, constructores, `this`, objetos dentro de objetos, `null` |
+| `mips_herencia.cps` | Tres niveles de herencia, atributos heredados, redefinición, despacho dinámico, búsqueda dinámica |
+| `mips_try_catch.cps` | Errores atrapados en el bloque, en funciones recursivas, con objetos nulos, en ciclos, `return` en `try`, `try` anidados |
+| `mips_error_no_atrapado.cps` | Error sin `try/catch`: mensaje y fin del programa |
+| `mips_programa_completo.cps` | Sistema de calificaciones: todo lo anterior junto |
+| `01_…cps` a `13_…cps`, `tac_*.cps`, `valido_*.cps` | Ejemplos de los proyectos anteriores (también se ejecutan en MARS) |
+| `errores_*.cps`, `tac_*_errores.cps` | Varios errores léxicos, sintácticos o semánticos por archivo: no se genera código |
+
+## Rúbrica y dónde está cada parte
+
+| Criterio | Puntos | Implementación | Pruebas |
+| --- | ---: | --- | --- |
+| Selección de registros (`getReg`) | 4 | `mips_registers.py` | `test_mips_basic.py` |
+| Registros y árboles de activación | 5 | `mips_frames.py`, `mips_functions.py`, `activation_tree.py` | `test_mips_frames.py`, `test_mips_functions.py`, `test_activation_tree.py`, `test_mips_runtime.py` |
+| Variables y constantes | 1 | `mips_basic.py` | `test_mips_basic.py`, `mips_basicos.cps` |
+| Expresiones aritméticas | 1 | `mips_basic.py` | `test_mips_basic.py`, `mips_basicos.cps` |
+| Expresiones lógicas | 1 | `mips_basic.py` + saltos de `mips_control.py` | `test_mips_basic.py`, `test_mips_control.py` |
+| Arreglos | 1 | `mips_basic.py` | `test_mips_basic.py`, `mips_basicos.cps` |
+| Sentencias de control | 3 | `mips_control.py` | `test_mips_control.py`, `mips_control_flujo.cps` |
+| Funciones y parámetros | 2 | `mips_functions.py` | `test_mips_functions.py`, `mips_funciones_recursion.cps` |
+| Recursividad | 2 | `mips_functions.py` | `test_mips_runtime.py`, `test_mips_mars.py` |
+| Clases y objetos | 2 | `mips_objects.py` | `test_mips_objects.py`, `mips_clases_objetos.cps` |
+| Herencia | 2 | `mips_objects.py` | `test_mips_objects.py`, `mips_herencia.cps` |
+| `try/catch` | 2 | `mips_exceptions.py`, `mips_runtime.py` | `test_mips_exceptions.py`, `mips_try_catch.cps` |
+| Mirilla (≥ 6 transformaciones) | 3 | `mips_peephole.py` (5 reglas) + `mips_peephole_control.py` (8 reglas) | `test_mips_basic.py`, `test_mips_peephole_control.py` |
+| Simulador compatible | 1 | MARS 4.5 (`mars_runner.py`, pestaña «Ejecución», `compilar.py --ejecutar`) | `test_mips_integration.py`, `test_mips_mars.py` |
+
+## Reparto del trabajo
+
+| Integrante | Parte |
+| --- | --- |
+| Persona 1 | Registros de activación, secuencias de llamada y retorno, recursividad, árboles de activación |
+| Persona 2 | Asignación de registros (`getReg`), instrucciones básicas, arreglos, cadenas, mirilla local |
+| Persona 3 | Control de flujo, clases, herencia, `try/catch`, integración del generador, mirilla de control de flujo, IDE y simulador |
 
 ## Estructura
 
 ```text
-Proyecto 2/
-├── docs/                     # TAC, control de flujo, funciones/entornos, arquitectura
-├── examples/                 # Archivos .cps válidos e inválidos
-├── grammar/                  # Gramática ANTLR
+Proyecto 3/
+├── docs/                         # Diseño de cada fase
+├── examples/                     # Programas .cps válidos e inválidos
+│   └── salidas/                  # Salida esperada de cada programa válido en MARS
+├── grammar/                      # Gramática ANTLR
 ├── src/
-│   ├── analyzer.py           # Lexer/parser ANTLR y diagnósticos
-│   ├── ast_nodes.py          # Modelo del AST
-│   ├── ast_builder.py        # Parse tree -> AST
-│   ├── ast_visitor.py        # Visitor base
-│   ├── ast_visualization.py  # Modelo visual del árbol
-│   ├── symbol_table.py       # Tabla de símbolos, ámbitos y entornos de ejecución
-│   ├── semantic_analyzer.py  # Sistema de tipos, control de flujo, listas
-│   ├── memory_layout.py      # Direcciones y registros de activación
-│   ├── tac.py                # Instrucciones y operandos del TAC
-│   ├── temporaries.py        # Asignación y reciclaje de temporales
-│   ├── tac_generator.py      # Generador de TAC (expresiones)
-│   ├── tac_control_flow.py   # Generador de TAC (control de flujo)
-│   ├── tac_functions.py      # Generador de TAC (funciones y llamadas)
-│   ├── tac_objects.py        # Generador de TAC (clases y objetos)
-│   ├── tac_exceptions.py     # Generador de TAC (try/catch)
-│   ├── compiler.py           # Pipeline completo usado por el IDE
-│   ├── generated/            # Lexer/parser generados
-│   ├── vendor/               # Runtime de ANTLR
-│   ├── ui.py                 # IDE
-│   └── app.py                # Punto de entrada
-├── tests/                    # Batería de pruebas (unittest)
-└── README.md
+│   ├── analyzer.py … semantic_analyzer.py   # Análisis (Lab. 1 y Proyecto 1)
+│   ├── tac*.py, memory_layout.py, temporaries.py   # Código intermedio (Proyecto 2)
+│   ├── mips_frames.py            # Marcos y direcciones (Persona 1)
+│   ├── mips_functions.py         # Llamadas, prólogo/epílogo, main (Persona 1)
+│   ├── activation_tree.py        # Árbol de activación (Persona 1)
+│   ├── mips_registers.py         # getReg y etiquetas de impresión (Persona 2)
+│   ├── mips_basic.py             # Aritmética, lógica, arreglos, cadenas, print (Persona 2)
+│   ├── mips_peephole.py          # Mirilla local (Persona 2)
+│   ├── mips_control.py           # Saltos y etiquetas (Persona 3)
+│   ├── mips_objects.py           # Objetos, herencia, vtables (Persona 3)
+│   ├── mips_exceptions.py        # try/catch (Persona 3)
+│   ├── mips_runtime.py           # Errores en ejecución y rutinas de soporte (Persona 3)
+│   ├── mips_peephole_control.py  # Mirilla de control de flujo (Persona 3)
+│   ├── mips_generator.py         # Integración TAC -> .asm (Persona 3)
+│   ├── compiler.py               # Pipeline completo
+│   ├── mars_runner.py            # Ejecución en MARS
+│   ├── compilar.py               # Línea de comandos
+│   ├── ui.py, ui_mips.py, app.py # IDE
+│   ├── generated/, vendor/       # ANTLR
+├── tests/                        # Batería de pruebas (unittest)
+└── tools/                        # ANTLR y MARS 4.5
 ```

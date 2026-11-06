@@ -1,0 +1,2 @@
+6
+Error en tiempo de ejecución: División por cero

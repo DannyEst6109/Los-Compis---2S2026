@@ -371,3 +371,44 @@ propio marco (por eso el paso 1 de la sección 3 los escribe a memoria).
 - Aplicar `mips_peephole.optimize_mips(lines)` al archivo completo antes
   de darle sangría. La prueba `tests/test_mips_basic.py` muestra cómo
   conectar los módulos con funciones y saltos de prueba.
+
+## Integración de Persona 3
+
+Detalle en [docs/MIPS_PERSONA3.md](docs/MIPS_PERSONA3.md).
+
+- **Punto de entrada:** `compiler.compile_source(fuente)` devuelve
+  `result.mips` (`MipsProgram`: `lines`, `text`, `raw_lines`, `peephole`,
+  `stats`) sólo si no hubo ningún diagnóstico. `mips_generator.generate_mips(tabla, tac)`
+  hace la traducción a partir del TAC; `trace=True` agrega la traza del árbol
+  de activación y `optimize=False` omite la mirilla.
+- **Recorrido:** `MipsGenerator` comparte un único `MipsRegisters` entre todos
+  los traductores, llama a `ensure_no_pending_params` antes de cada
+  instrucción que no sea `param`/`call`, guarda el código global antes de cada
+  `begin_func` y pasa a `translate_call` el marco que resolvió
+  `ObjectTranslator.method_frame(t)` para `call t, n`.
+- **Saltos y etiquetas** (`mips_control.py`): `spill` antes de cada salto y de
+  cada etiqueta; `forget` después de `goto` y de la etiqueta. Después de
+  `if`/`ifFalse` las asociaciones se conservan (los registros ya están limpios).
+- **Objetos** (`mips_objects.py`): el objeto `o` apunta al puntero a la vtable;
+  el atributo con desplazamiento `off` está en `off(o)` y su etiqueta de
+  impresión en `-(off + 1)(o)`. `Name.owner` (anotado por el generador de TAC)
+  es la clase estática del objeto; sin ella se usa la posición común a todas
+  las clases o la búsqueda dinámica `p3_lookup`. Etiquetas reservadas:
+  `p3_vt_<Clase>` (vtable) y `p3_members_<Clase>` (tabla de miembros, también
+  en `vtable - 4`).
+- **Errores en ejecución** (`mips_runtime.py`): Persona 2 recibe
+  `fault_label="p3_throw"`. Todo salto a `p3_throw` deja el mensaje en `$a0` y
+  guarda antes los registros modificados. Las etiquetas `p3_*` son de Persona 3.
+- **try/catch** (`mips_exceptions.py`): cada `try_begin` reserva 12 bytes en la
+  pila del marco (`$fp`, dirección del catch, manejador anterior) y
+  `p3_handler` apunta al activo. Al lanzar, se restauran `$fp` y `$sp` desde el
+  manejador. Con traza, cada marco descartado imprime `#<*` y
+  `activation_tree.py` lo marca como «interrumpida por excepción».
+- **Rutinas de soporte:** `p3_throw`, `p3_uncaught` y `p3_lookup` van al final
+  de `.text`, sólo si el código las usa. Sólo tocan `$t6-$t9` y `$a0-$a3`;
+  `p3_lookup` se llama con `jal` (`$ra` ya está guardado en el marco).
+- **Mirilla:** `mips_generator.peephole_optimize` alterna
+  `optimize_mips` (Persona 2) y `optimize_control_flow` (Persona 3) hasta que el
+  código no cambia, sólo en `.text`.
+- **Dobles de prueba:** `tests/mips_doubles.Translation.method_frame` ya usa la
+  resolución real de `mips_objects`.

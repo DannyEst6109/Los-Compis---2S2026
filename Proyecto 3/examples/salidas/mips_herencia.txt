@@ -1,0 +1,17 @@
+Beto
+3
+6000
+0
+7
+Ana (empleado)
+Beto (gerente)
+Carla (director)
+Dani (empleado)
+10357
+1007
+1
+1007
+300
+Ana -> empleado
+Carla -> director
+Lápiz -> producto

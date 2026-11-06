@@ -1,0 +1,20 @@
+negativo
+cero
+impar
+par
+91
+4
+6
+8
+15
+uno
+uno o dos
+fin de vuelta
+uno o dos
+fin de vuelta
+tres
+otro
+fin de vuelta
+0
+1
+grande

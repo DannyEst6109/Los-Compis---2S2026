@@ -1,0 +1,12 @@
+Dani [becado] A
+100
+Ana [regular] A
+91
+Beto [becado] B
+80
+Carla [regular] C
+71
+3
+12
+No se pudo calcular: División por cero
+No existe: Índice de arreglo fuera de rango

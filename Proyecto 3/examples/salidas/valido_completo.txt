@@ -1,0 +1,10 @@
+válido
+1
+90
+85
+diez
+otro
+2
+Toby ladra.
+Rex hace ruido.
+120

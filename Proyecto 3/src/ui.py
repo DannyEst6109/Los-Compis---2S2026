@@ -1,5 +1,5 @@
 """IDE de escritorio para escribir, analizar y compilar archivos Compiscript
-a código intermedio (TAC)."""
+a código intermedio (TAC) y a ensamblador MIPS (pestañas de ``ui_mips.py``)."""
 
 from __future__ import annotations
 
@@ -22,9 +22,10 @@ from symbol_table import (
     SymbolTable,
 )
 from tac import TACInstruction
+from ui_mips import MipsPanelsMixin
 
 
-class CompiscriptApp:
+class CompiscriptApp(MipsPanelsMixin):
     PAPER = "#F3F0E7"
     SURFACE = "#FFFEFA"
     INK = "#17243A"
@@ -68,6 +69,7 @@ class CompiscriptApp:
         self.scope_by_item: dict[str, Scope] = {}
         self.tac_line_instructions: list[TACInstruction | None] = []
         self.environment_by_item: dict[str, object] = {}
+        self._init_mips_state()
 
         self._configure_window()
         self._configure_styles()
@@ -79,6 +81,10 @@ class CompiscriptApp:
         self.root.title("Compilador Compiscript")
         self.root.geometry("1320x800")
         self.root.minsize(1040, 650)
+        try:
+            self.root.state("zoomed")  # Windows: aprovecha toda la pantalla para el editor y las pestañas
+        except tk.TclError:
+            pass
         self.root.configure(bg=self.PAPER)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -129,8 +135,12 @@ class CompiscriptApp:
         style.configure("TNotebook", background=self.SURFACE, borderwidth=0, tabmargins=(0, 0, 0, 8))
         style.configure(
             "TNotebook.Tab", background=self.SOFT, foreground=self.MUTED,
-            padding=(14, 9), font=("Segoe UI Semibold", 9), borderwidth=0,
+            padding=(11, 8), font=("Segoe UI Semibold", 9), borderwidth=0,
         )
+        style.configure(
+            "Surface.TCheckbutton", background=self.SURFACE, foreground=self.MUTED, font=("Segoe UI", 9)
+        )
+        style.map("Surface.TCheckbutton", background=[("active", self.SURFACE)])
         style.map(
             "TNotebook.Tab",
             background=[("selected", self.INK), ("active", "#DCE2EC"), ("focus", "#DCE6F7")],
@@ -153,7 +163,7 @@ class CompiscriptApp:
         ttk.Label(title_block, text="Compilador Compiscript", style="Title.TLabel").pack(anchor="w")
         ttk.Label(
             title_block,
-            text="Análisis léxico, sintáctico y semántico · código intermedio (TAC) · entornos de ejecución",
+            text="Análisis léxico, sintáctico y semántico · código intermedio (TAC) · ensamblador MIPS · ejecución en MARS",
             style="Subtitle.TLabel",
         ).pack(anchor="w")
 
@@ -231,13 +241,19 @@ class CompiscriptApp:
         ast_tab = ttk.Frame(self.inspector_tabs, style="Surface.TFrame", padding=(2, 4))
         symbols_tab = ttk.Frame(self.inspector_tabs, style="Surface.TFrame", padding=(2, 4))
         environments_tab = ttk.Frame(self.inspector_tabs, style="Surface.TFrame", padding=(2, 4))
+        self.mips_tab = ttk.Frame(self.inspector_tabs, style="Surface.TFrame", padding=(2, 4))
+        self.run_tab = ttk.Frame(self.inspector_tabs, style="Surface.TFrame", padding=(2, 4))
         self.diagnostics_tab = diagnostics_tab
         self.inspector_tabs.add(diagnostics_tab, text="Diagnósticos")
-        self.inspector_tabs.add(self.tac_tab, text="Código intermedio")
+        self.inspector_tabs.add(self.tac_tab, text="TAC")
+        self.inspector_tabs.add(self.mips_tab, text="MIPS")
+        self.inspector_tabs.add(self.run_tab, text="Ejecución")
         self.inspector_tabs.add(ast_tab, text="AST")
         self.inspector_tabs.add(symbols_tab, text="Símbolos")
         self.inspector_tabs.add(environments_tab, text="Entornos")
         self._build_tac_tab(self.tac_tab)
+        self._build_mips_tab(self.mips_tab)
+        self._build_run_tab(self.run_tab)
         self._build_environments_tab(environments_tab)
 
         result_head = ttk.Frame(diagnostics_tab, style="Surface.TFrame")
@@ -566,6 +582,7 @@ class CompiscriptApp:
         self.root.bind("<Control-o>", lambda _: self.open_file())
         self.root.bind("<Control-s>", lambda _: self.save_file())
         self.root.bind("<F5>", lambda _: self.analyze())
+        self.root.bind("<F6>", lambda _: self.run_in_mars())
         self.root.bind("<Escape>", lambda _: self.editor.focus_set())
 
     def _sync_scroll(self, first: str, last: str, scrollbar: ttk.Scrollbar) -> None:
@@ -689,6 +706,7 @@ class CompiscriptApp:
             self.root.configure(cursor="")
             self.analyze_button.state(["!disabled"])
         self.last_compilation = compilation
+        self.last_source = source
         self.last_result = compilation.analysis
         self.last_symbol_table = compilation.symbol_table
         self.last_diagnostics = compilation.diagnostics
@@ -704,6 +722,7 @@ class CompiscriptApp:
         self._show_ast(result)
         self._show_symbol_table(result, self.last_symbol_table)
         self._show_tac(self.last_compilation)
+        self._show_mips(self.last_compilation)
         self._show_environments(self.last_compilation)
 
         diagnostics = self.last_diagnostics
@@ -712,17 +731,21 @@ class CompiscriptApp:
         if not diagnostics:
             tac = self.last_compilation.tac if self.last_compilation is not None else None
             instructions = len(tac) if tac is not None else 0
+            mips = self.last_compilation.mips if self.last_compilation is not None else None
+            mips_count = mips.instruction_count if mips is not None else 0
             self._set_badge(self.summary_label, "SIN ERRORES", "success")
             self.result_detail.configure(
                 text=(
                     f"{result.line_count} líneas · {result.token_count} tokens · "
-                    f"{instructions} instrucciones TAC · {result.elapsed_ms:.1f} ms"
+                    f"{instructions} instrucciones TAC · {mips_count} instrucciones MIPS · "
+                    f"{result.elapsed_ms:.1f} ms"
                 )
             )
             self.empty_message.configure(
                 text=(
                     "El archivo fue compilado correctamente.\nNo se encontraron errores léxicos, "
-                    "sintácticos ni semánticos.\nEl código intermedio está en la pestaña «Código intermedio»."
+                    "sintácticos ni semánticos.\nEl TAC y el ensamblador están en las pestañas «TAC» y «MIPS»;\n"
+                    "«Ejecución» (F6) lo corre en MARS."
                 ),
                 fg=self.GREEN,
             )
@@ -730,8 +753,10 @@ class CompiscriptApp:
             self.diagnostic_detail.configure(
                 text="Detalle: el archivo no contiene diagnósticos.", fg=self.GREEN
             )
-            self.status_label.configure(text=f"Compilación exitosa: {instructions} instrucciones TAC")
-            self.inspector_tabs.select(self.tac_tab)
+            self.status_label.configure(
+                text=f"Compilación exitosa: {instructions} instrucciones TAC · {mips_count} instrucciones MIPS"
+            )
+            self.inspector_tabs.select(self.mips_tab)
             return
 
         total = len(diagnostics)
@@ -761,7 +786,13 @@ class CompiscriptApp:
         first = self.results.get_children()[0]
         self.results.selection_set(first)
         self._show_selected_detail()
-        self.status_label.configure(text=f"Compilación detenida: {total} diagnósticos, no se generó TAC")
+        generated_tac = self.last_compilation is not None and self.last_compilation.tac is not None
+        self.status_label.configure(
+            text=(
+                f"Compilación detenida: {total} diagnósticos, no se generó "
+                + ("el ensamblador" if generated_tac else "TAC ni ensamblador")
+            )
+        )
 
     @staticmethod
     def _diagnostic_tag(kind: str) -> str:
@@ -1316,6 +1347,8 @@ class CompiscriptApp:
         self._clear_ast(message or "Analice el archivo para construir el AST.")
         self._clear_symbols(message or "Analice el archivo para construir la tabla de símbolos.")
         self._clear_tac()
+        self._clear_mips()
+        self._clear_run()
         self._clear_environments()
         self.editor.tag_remove("tac_source", "1.0", "end")
 
