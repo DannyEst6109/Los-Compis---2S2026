@@ -16,6 +16,11 @@ Ejemplo para ``print(factorial(3));``::
 Cada nodo corresponde a un registro de activación distinto en la pila: dos
 llamadas a la misma función son dos nodos, aunque tengan los mismos
 argumentos.
+
+Cuando un error en tiempo de ejecución salta a un ``catch`` (``try/catch``,
+Persona 3), los marcos intermedios se descartan sin pasar por su epílogo;
+``p3_throw`` imprime ``#<*`` por cada uno, y aquí se cierran como
+activaciones interrumpidas por una excepción.
 """
 
 from __future__ import annotations
@@ -25,6 +30,7 @@ from dataclasses import dataclass, field
 from typing import Iterator
 
 ROOT_NAME = "main"
+UNWOUND = "*"  # «#<*»: activación descartada por una excepción
 
 # «#>nombre a1 a2» o «#<nombre», terminados en salto de línea. Pueden quedar
 # pegados a lo que imprimió el programa («5#>f 3»).
@@ -43,6 +49,7 @@ class Activation:
     arguments: tuple[str, ...] = ()
     children: list["Activation"] = field(default_factory=list)
     finished: bool = False
+    unwound: bool = False  # terminó por una excepción atrapada más arriba
 
     @property
     def label(self) -> str:
@@ -85,6 +92,10 @@ def build_activation_tree(output: str, strict: bool = True) -> Activation:
             continue
         if len(stack) == 1:
             raise ActivationTraceError(f"«{name}» termina sin haber empezado.")
+        if name == UNWOUND:
+            node = stack.pop()
+            node.finished = node.unwound = True
+            continue
         if stack[-1].name != name:
             raise ActivationTraceError(
                 f"Termina «{name}» pero la activación abierta es «{stack[-1].label}»."
@@ -103,7 +114,8 @@ def render_activation_tree(root: Activation) -> str:
     def draw(node: Activation, prefix: str) -> None:
         for index, child in enumerate(node.children):
             last = index == len(node.children) - 1
-            mark = "" if child.finished else "  (sin terminar)"
+            mark = "  (interrumpida por excepción)" if child.unwound else ""
+            mark = mark if child.finished else "  (sin terminar)"
             lines.append(f"{prefix}{'└── ' if last else '├── '}{child.label}{mark}")
             draw(child, prefix + ("    " if last else "│   "))
 

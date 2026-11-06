@@ -56,14 +56,35 @@ class ObjectMixin:
         target = self.visit(node.object)
         member = self._member_symbol(node.object, node.member)
         op = TACOp.METHOD_LOAD if member is not None and member.category is SymbolCategory.FUNCTION else TACOp.FIELD_LOAD
-        return self.compute(op, target, Name(node.member))
+        return self.compute(op, target, self.member_name(node.object, node.member))
 
-    def store_field(self, target: Operand, member: str, value: Operand) -> Operand:
+    def store_field(self, target: Operand, member: str | Name, value: Operand) -> Operand:
         """``target.member = value``; libera ``target`` y devuelve ``value``
         (el valor de una asignación es el valor asignado)."""
-        self.emit(TACOp.FIELD_STORE, target, Name(member), value)
+        name = member if isinstance(member, Name) else Name(member)
+        self.emit(TACOp.FIELD_STORE, target, name, value)
         self.temps.release(target)
         return value
+
+    # -- clase estática de un objeto (la usa la generación de MIPS) ---------
+    def static_class_name(self, object_node: ast.Expression | None) -> str | None:
+        """Clase estática del objeto de ``object_node`` (``None`` es
+        ``this``). Devuelve ``None`` si no se conoce."""
+        if object_node is None or isinstance(object_node, ast.ThisExpression):
+            return self.this_class_name()
+        object_type = self.type_of(object_node)
+        if object_type is None or object_type.kind is not TypeKind.CLASS or object_type.class_name is None:
+            return None
+        return object_type.class_name if self.table.find_class(object_type.class_name) is not None else None
+
+    def this_class_name(self) -> str | None:
+        if self._function is None or self._function.class_symbol is None:
+            return None
+        return self._function.class_symbol.name
+
+    def member_name(self, object_node: ast.Expression | None, member: str) -> Name:
+        """``Name`` de un atributo o método con su clase estática."""
+        return Name(member, self.static_class_name(object_node))
 
     def _member_symbol(self, object_node: ast.Expression, member: str) -> Symbol | None:
         object_type = self.type_of(object_node)
@@ -98,7 +119,7 @@ class ObjectMixin:
         for member in members:
             live_before = self.temps.live_count
             value = self.visit(member.initializer)
-            self.temps.release(self.store_field(THIS, member.name, value))
+            self.temps.release(self.store_field(THIS, self.member_name(None, member.name), value))
             if self.temps.live_count != live_before:
                 raise _error(member, f"El valor inicial de «{member.name}» dejó temporales vivos.")
 
@@ -144,6 +165,6 @@ class ObjectMixin:
             member = self._member_symbol(receiver_node, method)
         arguments = [self.visit(argument) for argument in node.arguments]
         address = self.temps.new()
-        self.emit(TACOp.METHOD_LOAD, address, receiver, Name(method))
+        self.emit(TACOp.METHOD_LOAD, address, receiver, self.member_name(receiver_node, method))
         returns_value = member is None or member.return_type is not None
         return self.call(address, [receiver, *arguments], returns_value)

@@ -67,7 +67,6 @@ from tac import (
     SOURCE_BINARY_OPS,
     SOURCE_UNARY_OPS,
     Const,
-    Name,
     Operand,
     TACInstruction,
     TACOp,
@@ -141,6 +140,11 @@ def infer_expression_types(table: SymbolTable, program: ast.Program) -> dict[int
 # (L1, L2, ...). Una variable del programa con uno de estos nombres se
 # renombra para que nunca se confunda con ellos.
 _RESERVED_NAME = re.compile(r"^(t|L)\d+$")
+
+# Tipos que no dicen nada del valor: en un programa sin diagnósticos, ERROR
+# sólo significa que la inferencia no pudo seguir (p. ej. un método llamado
+# sobre un parámetro sin anotación).
+_UNINFERRED = (TypeKind.UNKNOWN, TypeKind.ERROR)
 
 
 class TACGenerator(FunctionMixin, ObjectMixin, ExceptionMixin, ControlFlowMixin, AstVisitor[Operand | None]):
@@ -304,7 +308,7 @@ class TACGenerator(FunctionMixin, ObjectMixin, ExceptionMixin, ControlFlowMixin,
         symbol, owner = self.resolve(node, node.name)
         if self.is_attribute(symbol, owner):
             # Atributo nombrado sin «this.» dentro de un método.
-            return self.compute(TACOp.FIELD_LOAD, self.this_operand(node), Name(node.name))
+            return self.compute(TACOp.FIELD_LOAD, self.this_operand(node), self.member_name(None, node.name))
         return Var(self._tac_name(symbol), symbol)
 
     def visit_grouping_expression(self, node: ast.GroupingExpression) -> Operand:
@@ -346,16 +350,33 @@ class TACGenerator(FunctionMixin, ObjectMixin, ExceptionMixin, ControlFlowMixin,
 
     def _is_string_concat(self, node: ast.BinaryExpression, left: Operand, right: Operand) -> bool:
         node_type = self.type_of(node)
-        if node_type is not None and node_type.kind is not TypeKind.UNKNOWN:
+        if node_type is not None and node_type.kind not in _UNINFERRED:
             return node_type.kind is TypeKind.STRING
         # Sin tipo conocido (p. ej. un parámetro sin anotación): basta con
         # que un operando sea string para que «+» sea una concatenación.
         for side, operand in ((node.left, left), (node.right, right)):
-            side_type = self.type_of(side)
-            if side_type is not None and side_type.kind is TypeKind.STRING:
-                return True
             if isinstance(operand, Const) and operand.type_name == "string":
                 return True
+            if self._is_string_expression(side):
+                return True
+        return False
+
+    def _is_string_expression(self, node: ast.Expression) -> bool:
+        """``True`` si ``node`` produce un string aunque su tipo no se haya
+        podido inferir: por ejemplo ``x.nombre + " -> "`` con ``x`` sin
+        anotación es una concatenación, así que ``(x.nombre + " -> ") + y``
+        también lo es (Proyecto 3: sin esto se sumaban los punteros)."""
+        node_type = self.type_of(node)
+        if node_type is not None and node_type.kind is TypeKind.STRING:
+            return True
+        if node_type is not None and node_type.kind not in _UNINFERRED:
+            return False
+        if isinstance(node, ast.LiteralExpression):
+            return node.literal_type == "string"
+        if isinstance(node, ast.GroupingExpression):
+            return self._is_string_expression(node.expression)
+        if isinstance(node, ast.BinaryExpression) and node.operator == "+":
+            return self._is_string_expression(node.left) or self._is_string_expression(node.right)
         return False
 
     # -- expresiones: asignación ------------------------------------------------
@@ -363,10 +384,11 @@ class TACGenerator(FunctionMixin, ObjectMixin, ExceptionMixin, ControlFlowMixin,
         target = node.target
         if isinstance(target, ast.MemberExpression):
             instance = self.visit(target.object)
-            return self.store_field(instance, target.member, self.visit(node.value))
+            member = self.member_name(target.object, target.member)
+            return self.store_field(instance, member, self.visit(node.value))
         if isinstance(target, ast.IdentifierExpression) and self.is_attribute(*self.resolve(target, target.name)):
             value = self.visit(node.value)
-            return self.store_field(self.this_operand(target), target.name, value)
+            return self.store_field(self.this_operand(target), self.member_name(None, target.name), value)
         if isinstance(target, ast.IdentifierExpression):
             value = self.visit(node.value)
             variable = self.variable(target, target.name)

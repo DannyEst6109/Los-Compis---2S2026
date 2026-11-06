@@ -104,9 +104,17 @@ class Label:
 @dataclass(frozen=True, slots=True)
 class Name:
     """Identificador que no es un valor almacenable: nombre de función,
-    de clase o de atributo (en ``call``, ``new``, ``o.f``, ``begin_func``)."""
+    de clase o de atributo (en ``call``, ``new``, ``o.f``, ``begin_func``).
+
+    ``owner`` sólo se usa en atributos y métodos (``o.f``, ``method o.m``):
+    es la clase estática del objeto según el análisis semántico, o ``None``
+    si no se conoce (por ejemplo, un parámetro sin anotación). Igual que
+    ``Var.symbol``, no participa en la igualdad ni en la impresión; la
+    generación de MIPS lo usa para calcular el desplazamiento del atributo
+    o la posición del método en la vtable."""
 
     name: str
+    owner: str | None = field(default=None, compare=False, repr=False)
 
     def __str__(self) -> str:
         return self.name
