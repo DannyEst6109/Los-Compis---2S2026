@@ -392,8 +392,8 @@ Detalle en [docs/MIPS_PERSONA3.md](docs/MIPS_PERSONA3.md).
 - **Objetos** (`mips_objects.py`): el objeto `o` apunta al puntero a la vtable;
   el atributo con desplazamiento `off` está en `off(o)` y su etiqueta de
   impresión en `-(off + 1)(o)`. `Name.owner` (anotado por el generador de TAC)
-  es la clase estática del objeto; sin ella se usa la posición común a todas
-  las clases o la búsqueda dinámica `p3_lookup`. Etiquetas reservadas:
+  es la clase estática del objeto; sin ella se usa siempre la búsqueda
+  dinámica `p3_lookup`, que verifica que el receptor tenga el miembro. Etiquetas reservadas:
   `p3_vt_<Clase>` (vtable) y `p3_members_<Clase>` (tabla de miembros, también
   en `vtable - 4`).
 - **Errores en ejecución** (`mips_runtime.py`): Persona 2 recibe

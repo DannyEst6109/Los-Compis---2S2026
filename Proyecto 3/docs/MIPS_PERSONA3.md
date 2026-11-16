@@ -225,10 +225,10 @@ El generador de TAC anota en `Name.owner` la clase estática del objeto
 (como `Var.symbol`, no se imprime ni participa en la igualdad). Con eso:
 
 1. **Clase estática conocida** → desplazamiento y posición fijos.
-2. **Clase desconocida** (por ejemplo `function etiqueta(x) { return x.nombre; }`,
-   un parámetro sin anotación): si todas las clases que tienen ese miembro
-   lo ponen en el mismo lugar, se usa ese lugar.
-3. **Si no**, se busca en tiempo de ejecución: `p3_lookup` recorre la tabla
+2. **Clase desconocida** (por ejemplo `function etiqueta(x) { print(x.nombre); }`,
+   un parámetro sin anotación): siempre se busca en tiempo de ejecución.
+   Compartir posiciones entre las clases que tienen el miembro no garantiza
+   que el receptor real lo tenga. `p3_lookup` recorre la tabla
    de miembros de la clase real del objeto (en `vtable - 4`), con entradas
    `clave, valor, tamaño` (desplazamiento del atributo o dirección del
    método). Si el objeto no tiene el miembro, lanza «El objeto no tiene el

@@ -53,11 +53,10 @@ Resolución de miembros
 El generador de TAC anota en ``Name.owner`` la clase estática del objeto.
 
 1. Clase estática conocida: desplazamiento y posición en la vtable fijos.
-2. Clase desconocida (por ejemplo, un parámetro sin anotación): si todas
-   las clases que tienen ese miembro lo ponen en el mismo lugar, se usa ese
-   lugar.
-3. Si no, se busca en tiempo de ejecución (``p3_lookup``) en la tabla de
-   miembros de la clase dinámica del objeto.
+2. Clase desconocida (por ejemplo, un parámetro sin anotación): se busca
+   en tiempo de ejecución (``p3_lookup``) en la tabla de miembros de la
+   clase dinámica. Compartir un desplazamiento no garantiza que el objeto
+   recibido tenga ese miembro.
 
 Todo acceso verifica antes que el objeto no sea ``null`` (salvo ``this``, que
 nunca lo es); si lo es, lanza el error «Acceso a un objeto nulo», que puede
@@ -206,9 +205,6 @@ class ObjectTranslator:
             if (slot := self._field_slot(layout, name)) is not None
         }
         sizes = frozenset(size for _offset, size in places)
-        offsets = {offset for offset, _size in places}
-        if len(offsets) == 1 and len(sizes) == 1:
-            return FieldAccess(name, offsets.pop(), sizes, key)
         return FieldAccess(name, None, sizes, key)
 
     @staticmethod
@@ -235,8 +231,9 @@ class ObjectTranslator:
                 for layout in self.layouts.values()
                 if layout.method_index(name) is not None
             ]
-            indexes = {index for _layout, index in candidates}
-            index = indexes.pop() if len(indexes) == 1 else None
+            # La posición común sólo describe las clases que tienen el
+            # método; el receptor real también podría ser de otra clase.
+            index = None
         frames = [self._frame(layout.vtable[position][1], instruction) for layout, position in candidates]
         self._check_signatures(name, frames, instruction)
         return MethodAccess(name, index, frames[0], key)

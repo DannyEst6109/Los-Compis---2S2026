@@ -121,7 +121,7 @@ class ObjectRepresentationTests(unittest.TestCase):
         """)
         instruction = None  # sólo se usa en los mensajes de error
         self.assertTrue(objects.field_access(Name("x"), instruction).dynamic)  # 4 en A, 8 en B
-        self.assertEqual(objects.field_access(Name("solo"), instruction).offset, 8)  # sólo existe en A
+        self.assertTrue(objects.field_access(Name("solo"), instruction).dynamic)  # B no tiene solo
         self.assertEqual(objects.field_access(Name("x", "B"), instruction).offset, 8)  # clase estática
         self.assertTrue(objects.method_access(Name("f"), instruction).dynamic)  # posición 0 en A, 1 en B
         self.assertEqual(objects.method_access(Name("f", "B"), instruction).index, 1)
@@ -141,6 +141,32 @@ class ObjectRepresentationTests(unittest.TestCase):
 
 @needs_mars
 class ObjectExecutionTests(MarsTestCase):
+    def test_untyped_missing_fields_are_caught_without_reading_or_overwriting_other_fields(self) -> None:
+        self.assert_runs("""
+            class A { let x: integer = 7; }
+            class B { let y: integer = 9; }
+            function read(o) {
+                try { print(o.x); } catch (e) { print(e); }
+            }
+            function write(o) {
+                try { o.x = 300; } catch (e) { print(e); }
+            }
+            let a: A = new A(); let b: B = new B();
+            read(a); read(b); write(a); write(b);
+            print(a.x); print(b.y);
+        """, "7\nEl objeto no tiene el miembro solicitado\nEl objeto no tiene el miembro solicitado\n300\n9")
+
+    def test_untyped_missing_method_does_not_call_an_unrelated_vtable_entry(self) -> None:
+        self.assert_runs("""
+            class A { function f(): integer { return 1; } }
+            class B { function g(x: integer): integer { return x; } }
+            class C { function f(): integer { return 3; } }
+            function call(o) {
+                try { print(o.f()); } catch (e) { print(e); }
+            }
+            call(new A()); call(new B()); call(new C());
+        """, "1\nEl objeto no tiene el miembro solicitado\n3")
+
     def test_same_type_inherited_attribute_redeclaration_preserves_full_value(self) -> None:
         self.assert_runs("""
             class A { let x: integer = 1; }

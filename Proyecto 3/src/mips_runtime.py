@@ -16,9 +16,9 @@ Contiene lo que no corresponde a una sola instrucción TAC:
     lo retira, restaura ``$fp`` y ``$sp`` (descarta los marcos intermedios)
     y salta al ``catch``; si no, imprime el error y termina el programa.
   - ``p3_lookup``: búsqueda dinámica de un atributo o método por su clave
-    en la tabla de miembros de la clase del objeto (sólo cuando la clase
-    estática del objeto no se conoce y el miembro está en posiciones
-    distintas según la clase).
+    en la tabla de miembros de la clase del objeto cuando su clase
+    estática no se conoce. También comprueba que el miembro exista aunque
+    todas las clases que lo tienen compartan su posición.
 
 Pila de manejadores (la usa ``mips_exceptions.py``). Cada ``try_begin``
 reserva 12 bytes en la pila del marco actual::
