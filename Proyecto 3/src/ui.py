@@ -23,6 +23,7 @@ from symbol_table import (
 )
 from tac import TACInstruction
 from ui_mips import MipsPanelsMixin
+from ui_automaton import AutomatonPanel
 
 
 class CompiscriptApp(MipsPanelsMixin):
@@ -251,6 +252,8 @@ class CompiscriptApp(MipsPanelsMixin):
         self.inspector_tabs.add(ast_tab, text="AST")
         self.inspector_tabs.add(symbols_tab, text="Símbolos")
         self.inspector_tabs.add(environments_tab, text="Entornos")
+        self.automaton_panel = AutomatonPanel(self.inspector_tabs, self)
+        self.inspector_tabs.add(self.automaton_panel, text="Autómata")
         self._build_tac_tab(self.tac_tab)
         self._build_mips_tab(self.mips_tab)
         self._build_run_tab(self.run_tab)

@@ -40,6 +40,26 @@ AST independiente de ANTLR
 
 ## Módulos
 
+### `lexical_automaton.py` y `ui_automaton.py`
+
+La pestaña «Autómata» deriva un AFD para cada regla de token desde
+`CompiscriptLexer.atn`, sin modificar los analizadores generados. Calcula
+cierres epsilon con una pila de retornos para los fragmentos, divide el
+alfabeto Unicode en intervalos, determiniza los conjuntos de configuraciones
+y fusiona estados equivalentes. Las transiciones no dibujadas llevan al
+rechazo implícito. Los grafos se almacenan en caché y no requieren Java ni
+dependencias adicionales.
+
+El recorrido de la entrada conserva los estados visitados y la posición
+del primer carácter sin transición. La interfaz permite evaluar, avanzar
+por carácter, reiniciar y ajustar el zoom. La aceptación es la del lenguaje
+de la regla, independiente de la prioridad entre tokens y de las decisiones
+no codiciosas del lexer: otra consulta al lexer real presenta su resultado
+por separado. Por ejemplo, `let` pertenece al lenguaje de `Identifier`, pero
+su token efectivo es `LET`. La vista acepta hasta 2000 caracteres y 256
+estados por regla; los predicados y fragmentos recursivos no se aproximan
+silenciosamente, sino que se rechazan explícitamente.
+
 ### `analyzer.py`
 
 - Configura el lexer y el parser generados por ANTLR.

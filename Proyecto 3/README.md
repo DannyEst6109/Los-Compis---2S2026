@@ -51,6 +51,18 @@ TAC** genera código ensamblador **MIPS32** que se ejecuta en el simulador
      texto conserva el árbol completo.
    - **AST**, **Símbolos** y **Entornos** (registros de activación, área
      global y distribución de cada clase con su vtable).
+5. **Autómata** funciona incluso sin abrir ni compilar un archivo:
+   - Seleccione una de las 61 reglas léxicas (`Identifier`, `IntegerLiteral`,
+     `StringLiteral`, palabras reservadas, operadores o comentarios).
+   - El grafo se genera desde el lexer ANTLR incluido; una flecha marca el
+     estado inicial y los estados de aceptación tienen doble círculo.
+   - Escriba una entrada literal y use **Evaluar** o **Paso** para resaltar
+     el recorrido. **Reiniciar** vuelve al inicio; el zoom y **Ajustar**
+     permiten explorar el dibujo.
+   - La aceptación corresponde al lenguaje de la regla seleccionada. El
+     resultado del lexer real aparece por separado: aplica prioridad entre
+     tokens y terminación no codiciosa (por ejemplo, el primer `*/` de un
+     comentario). Esta vista no determina si un programa completo es válido.
 
 ### Línea de comandos
 
@@ -74,7 +86,7 @@ I/O*. También por consola: `java -jar tools\Mars4_5.jar nc sm programa.asm`.
 python -m unittest discover -s tests -v      # o: .\verificar.bat
 ```
 
-528 pruebas. Las que ejecutan MARS se omiten automáticamente si no hay Java.
+537 pruebas. Las que ejecutan MARS se omiten automáticamente si no hay Java.
 Además de comparar la salida, verifican que `$sp` y `$fp` terminen en el
 tope de la pila.
 
