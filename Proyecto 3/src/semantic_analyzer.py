@@ -81,6 +81,7 @@ from typing import Optional
 
 import ast_nodes as ast
 from ast_visitor import AstVisitor
+from semantic_flow import NEXT, statement_exits
 from symbol_table import (
     Diagnostic,
     ParameterInfo,
@@ -154,6 +155,7 @@ class SemanticAnalyzer(AstVisitor[Type]):
         self.diagnostics: list[Diagnostic] = []
         self._return_type_stack: list[Type] = []
         self._symbol_types: dict[int, Type] = {}
+        self._classes: list[ast.ClassDeclaration] = []
         # Ciclos y switch que encierran la instrucción actual (dentro de la
         # función actual), para saber si un break/continue es un salto válido.
         self._loop_depth = 0
@@ -161,6 +163,10 @@ class SemanticAnalyzer(AstVisitor[Type]):
 
     def analyze(self, program: ast.Program) -> list[Diagnostic]:
         self.visit(program)
+        # Las superclases pueden aparecer después de las subclases: esperar
+        # hasta que se hayan inferido los tipos de todos sus atributos.
+        for declaration in self._classes:
+            self._check_inherited_attributes(declaration)
         return self.diagnostics
 
     # utilidades internas 
@@ -354,8 +360,32 @@ class SemanticAnalyzer(AstVisitor[Type]):
         self._visit_statement_sequence(node.statements)
 
     def visit_class_declaration(self, node: ast.ClassDeclaration) -> None:
+        self._classes.append(node)
         for member in node.members:
             self.visit(member)
+
+    def _check_inherited_attributes(self, node: ast.ClassDeclaration) -> None:
+        symbol = self._symbol_for_name(node, node.name)
+        parent = self.table.find_class(node.superclass) if node.superclass else None
+        if symbol is None or parent is None:
+            return
+        inherited = self.table.class_members(parent)
+        for member in node.members:
+            if not isinstance(member, (ast.VariableDeclaration, ast.ConstantDeclaration)):
+                continue
+            base = inherited.get(member.name)
+            own = symbol.attributes.get(member.name)
+            if base is None or own is None or base.category is SymbolCategory.FUNCTION:
+                continue
+            base_type, own_type = self._type_of_symbol(base), self._type_of_symbol(own)
+            if TypeKind.ERROR in (base_type.kind, own_type.kind):
+                continue
+            if base_type != own_type:
+                self._error(
+                    member, member.name,
+                    f"El atributo heredado «{member.name}» es de tipo {base_type}; "
+                    f"no puede redeclararse con tipo {own_type}.",
+                )
 
     def visit_parameter(self, node: ast.Parameter) -> None:
         symbol = self._symbol_for_name(node, node.name)
@@ -372,8 +402,16 @@ class SemanticAnalyzer(AstVisitor[Type]):
         # que la contiene.
         outer_depths = (self._loop_depth, self._breakable_depth)
         self._loop_depth = self._breakable_depth = 0
+        previous_errors = len(self.diagnostics)
         try:
             self._visit_statement_sequence(node.body.statements)
+            if (return_type.kind not in (TypeKind.VOID, TypeKind.UNKNOWN, TypeKind.ERROR)
+                    and len(self.diagnostics) == previous_errors
+                    and NEXT in statement_exits(node.body)):
+                self._error(
+                    node, node.name,
+                    f"La función «{node.name}» puede terminar sin devolver un valor de tipo {return_type}.",
+                )
         finally:
             self._loop_depth, self._breakable_depth = outer_depths
             self._return_type_stack.pop()

@@ -68,7 +68,7 @@ I/O*. También por consola: `java -jar tools\Mars4_5.jar nc sm programa.asm`.
 python -m unittest discover -s tests -v      # o: .\verificar.bat
 ```
 
-514 pruebas. Las que ejecutan MARS se omiten automáticamente si no hay Java.
+521 pruebas. Las que ejecutan MARS se omiten automáticamente si no hay Java.
 Además de comparar la salida, verifican que `$sp` y `$fp` terminen en el
 tope de la pila.
 

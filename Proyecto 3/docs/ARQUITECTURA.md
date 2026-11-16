@@ -138,6 +138,14 @@ Responsabilidades:
 - Sistema de tipos: aritmética (`+ - * /  %`), lógica (`&& || !`), comparaciones (`== != < <= > >=`), compatibilidad en asignaciones, inicialización de constantes (ya la exige la gramática), tipos de elementos de listas.
 - Control de flujo: condición booleana en `if`/`while`/`do-while`/`for` (ver desviación sobre `switch` más abajo).
 - Funciones: cantidad y tipo de argumentos (posicional) contra `Symbol.parameters`, tipo de retorno contra `Symbol.return_type`/lo declarado en el `FunctionDeclaration` que se está visitando, recursión (se resuelve gratis: una llamada recursiva es sólo una llamada a un símbolo que ya tiene su firma completa gracias al hoisting de `symbol_table.py`).
+- Retornos completos: `semantic_flow.py` calcula las salidas posibles de bloques,
+  ramas, ciclos, `switch` con fall-through y `try/catch`. Una función con tipo
+  de retorno no puede alcanzar su final sin devolver un valor. Los ciclos
+  infinitos sin salida no requieren un retorno; las condiciones no constantes
+  y las rutas de excepción se analizan de forma conservadora.
+- Atributos heredados: una redeclaración debe conservar exactamente el tipo
+  del atributo original, incluido el tipo inferido. La validación se hace
+  después del recorrido para admitir superclases declaradas más adelante.
 - Clases y objetos: existencia de atributos/métodos accedidos con `.` (vía `SymbolTable.class_members`, que ya incluye herencia), validación de argumentos del constructor en `new`, tipo de `this` dentro de un método.
 - Listas: tipo de los elementos de un literal de lista, tipo del índice (`integer`), que sólo se pueda indexar algo de tipo lista.
 - Generales: código muerto (instrucción después de un `return`/`break`/`continue` incondicional dentro del mismo bloque — un solo diagnóstico por tramo muerto, pero el tramo se sigue analizando para no ocultar otros errores; un `break`/`continue` fuera de un ciclo o un `return` fuera de una función no marcan código muerto, porque ese error ya se reportó), expresiones sin sentido semántico (p. ej. usar una función como operando aritmético, que cae naturalmente en la validación de tipos de operadores).

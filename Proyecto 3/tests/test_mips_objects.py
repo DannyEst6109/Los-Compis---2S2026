@@ -141,6 +141,14 @@ class ObjectRepresentationTests(unittest.TestCase):
 
 @needs_mars
 class ObjectExecutionTests(MarsTestCase):
+    def test_same_type_inherited_attribute_redeclaration_preserves_full_value(self) -> None:
+        self.assert_runs("""
+            class A { let x: integer = 1; }
+            class B: A { let x: integer = 300; }
+            let b: B = new B(); let a: A = b;
+            print(b.x); print(a.x);
+        """, "300\n300")
+
     def test_creation_and_attribute_reads_and_writes(self) -> None:
         self.assert_runs("""
             class Persona {
