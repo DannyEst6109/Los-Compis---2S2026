@@ -120,9 +120,9 @@ class ActivationRecordTests(unittest.TestCase):
             "function factorial(n: integer): integer { if (n <= 1) { return 1; } return n * factorial(n - 1); }"
         )
         record = symbol(table, "factorial").activation_record
-        self.assertEqual(record.temporaries, 1)
+        self.assertEqual(record.temporaries, 2)
         self.assertEqual(record.temporary_slots()[0].offset, 16)
-        self.assertEqual(record.size, 20)
+        self.assertEqual(record.size, 24)
 
     def test_begin_func_announces_record_size(self) -> None:
         result = compile_source("function f(a: integer): integer { let b = a * 2; return b + 1; }")

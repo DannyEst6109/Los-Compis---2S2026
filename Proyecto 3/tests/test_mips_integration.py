@@ -191,6 +191,66 @@ class MarsSimulatorTests(MarsTestCase):
         self.assertIn("máximo de instrucciones", run.problem)
 
 
+@needs_mars
+class EvaluationOrderTests(MarsTestCase):
+    def test_values_are_preserved_before_side_effects(self) -> None:
+        self.assert_runs("""
+            let x: integer = 1;
+            print(x + (x = 2));
+            function change(): integer { x = 2; return 10; }
+            x = 1;
+            print(x + change());
+            function pair(a: integer, b: integer) { print(a); print(b); }
+            x = 1;
+            pair(x, x = 2);
+            let values: integer[] = [10, 20, 30];
+            let i: integer = 0;
+            values[i] = (i = 1);
+            print(values[0]);
+            print(values[1]);
+        """, "3\n11\n1\n2\n1\n20")
+
+    def test_receiver_and_constructor_arguments_are_preserved(self) -> None:
+        self.assert_runs("""
+            class Box {
+                let value: integer;
+                function constructor(x: integer) { this.value = x; }
+                function show(other: Box) { print(this.value); print(other.value); }
+            }
+            let first: Box = new Box(1);
+            let second: Box = new Box(2);
+            first.show(first = second);
+            let number: integer = 7;
+            function reset(): integer { number = 99; return 0; }
+            class Reset {
+                let initialized: integer = reset();
+                let original: integer;
+                function constructor(x: integer) { this.original = x; }
+            }
+            let result: Reset = new Reset(number);
+            print(result.original);
+        """, "1\n2\n7")
+
+    def test_addition_uses_runtime_types_for_unannotated_parameters(self) -> None:
+        self.assert_runs("""
+            function add(a, b) { print(a + b); }
+            add("ca", "fé");
+            add(20, 22);
+            try { add("texto", 1); } catch (error) { print(123); }
+            function suffix(a) { print(a + "x"); }
+            try { suffix(1); } catch (error) { print(456); }
+            function keep(a, b) {
+                let stored: integer = 9;
+                print(a + b);
+                function noop() { }
+                noop();
+                print(stored);
+            }
+            keep(2, 3);
+            keep("a", "b");
+        """, "café\n42\n123\n456\n5\n9\nab\n9")
+
+
 class CommandLineTests(unittest.TestCase):
     def run_cli(self, *args: str) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()

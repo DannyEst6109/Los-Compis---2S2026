@@ -67,6 +67,7 @@ BASIC_FAULT_MESSAGES = (
     "Arreglo nulo",
     "Índice de arreglo fuera de rango",
     "Cadena nula",
+    "La suma requiere dos cadenas o dos enteros",
 )
 
 

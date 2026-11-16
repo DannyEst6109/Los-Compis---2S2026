@@ -137,7 +137,9 @@ class ObjectMixin:
         class_symbol = self.table.find_class(node.class_name)
         if class_symbol is None:
             raise _error(node, f"No se encontró la clase «{node.class_name}» en la tabla de símbolos.")
-        arguments = [self.visit(argument) for argument in node.arguments]
+        # Los inicializadores de atributos también pueden modificar globales
+        # después de evaluar los argumentos del constructor.
+        arguments = [self._snapshot(argument) for argument in self.evaluate_arguments(node.arguments)]
         instance = self.temps.new()
         self.emit(TACOp.NEW_OBJECT, instance, Name(node.class_name))
         for ancestor in self._inheritance_chain(class_symbol):
@@ -161,9 +163,9 @@ class ObjectMixin:
             receiver = self.this_operand(node)
             member = self.table.class_members(self._function.class_symbol).get(method)
         else:
-            receiver = self.visit(receiver_node)
+            receiver = self.preserve_before(self.visit(receiver_node), node.arguments)
             member = self._member_symbol(receiver_node, method)
-        arguments = [self.visit(argument) for argument in node.arguments]
+        arguments = self.evaluate_arguments(node.arguments)
         address = self.temps.new()
         self.emit(TACOp.METHOD_LOAD, address, receiver, self.member_name(receiver_node, method))
         returns_value = member is None or member.return_type is not None

@@ -2,12 +2,12 @@
 
 from mips_functions import MipsFunctionError
 from mips_registers import NULL_TAG, STRING_HEAD, STRING_TAG, MipsRegisters
-from tac import BINARY_OPS, UNARY_OPS, Const, TACInstruction, TACOp
+from tac import BINARY_OPS, UNARY_OPS, Const, Operand, TACInstruction, TACOp
 
 
 HANDLED_OPS = BINARY_OPS | UNARY_OPS | {
     TACOp.ASSIGN, TACOp.NEW_ARRAY, TACOp.INDEX_LOAD, TACOp.INDEX_STORE,
-    TACOp.LENGTH, TACOp.CONCAT, TACOp.PRINT,
+    TACOp.LENGTH, TACOp.CONCAT, TACOp.PRINT, TACOp.DYNAMIC_ADD,
 }
 
 _ARITHMETIC = {TACOp.ADD: "addu", TACOp.SUB: "subu", TACOp.MUL: "mul"}
@@ -60,8 +60,20 @@ class BasicTranslator:
                 return lines + [f"addiu $t7, $t7, {immediate}"] + regs.assign_from(dest, unit, "$t7")
         if b is not None:
             lines += regs.load_into(b, unit, "$t8")
+        if op is TACOp.DYNAMIC_ADD:
+            text, done = self._label(), self._label()
+            # Ambos caminos deben tener el mismo respaldo en memoria antes
+            # de que las comprobaciones de cadenas limpien los registros.
+            lines += regs.spill(unit)
+            lines += regs.load_type(a, unit, "$a1") + regs.load_type(b, unit, "$a2")
+            lines += [
+                f"li $t6, {STRING_TAG}", f"beq $a1, $t6, {text}", f"beq $a2, $t6, {text}",
+                "addu $t7, $t7, $t8", "move $a3, $zero", f"j {done}", f"{text}:",
+            ]
+            lines += self._concat(unit, a, b) + [f"li $a3, {STRING_TAG}", f"{done}:"]
+            return lines + regs.assign_from(dest, unit, "$t7", tag="$a3")
         if op is TACOp.CONCAT:
-            lines += self._concat(unit) + [f"li $a3, {STRING_TAG}"]
+            lines += self._concat(unit, a, b) + [f"li $a3, {STRING_TAG}"]
             return lines + regs.assign_from(dest, unit, "$t7", tag="$a3")
         elif op in _ARITHMETIC:
             lines.append(f"{_ARITHMETIC[op]} $t7, $t7, $t8")
@@ -114,10 +126,14 @@ class BasicTranslator:
             return lines + ["sw $t9, 4($t7)", "sb $a3, 4($t6)"]
         return lines + ["lw $t9, 4($t7)", "lbu $a3, 4($t6)"] + regs.assign_from(dest, unit, "$t9", tag="$a3")
 
-    def _concat(self, unit: str | None) -> list[str]:
+    def _concat(self, unit: str | None, left: Operand, right: Operand) -> list[str]:
         """Busca la cadena completa antes de reservar memoria para una nueva."""
         lines = self._guard("bne", "$t7", unit, "Cadena nula\n")
         lines += self._guard("bne", "$t8", unit, "Cadena nula\n")
+        for operand in (left, right):
+            lines += self.registers.load_type(operand, unit, "$t6")
+            lines.append(f"xori $t6, $t6, {STRING_TAG}")
+            lines += self._guard("beq", "$t6", unit, "La suma requiere dos cadenas o dos enteros\n")
         search, advance, allocate, done = (self._label() for _ in range(4))
         lines += [
             "lw $t6, 0($t7)", "lw $t9, 0($t8)", "addu $t9, $t6, $t9",

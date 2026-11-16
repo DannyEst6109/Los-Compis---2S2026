@@ -148,6 +148,7 @@ class TACOp(Enum):
 
     # Concatenación de string (el backend la traduce distinto a ADD).
     CONCAT = "concat"
+    DYNAMIC_ADD = "dynamic_add"
 
     # Relacionales y de igualdad (producen boolean).
     LT = "<"
@@ -236,6 +237,7 @@ class TACError(Exception):
 _FORMATS: dict[TACOp, str] = {
     TACOp.ASSIGN: "{r} = {a}",
     TACOp.CONCAT: "{r} = concat {a}, {b}",
+    TACOp.DYNAMIC_ADD: "{r} = dynamic_add {a}, {b}",
     TACOp.NEG: "{r} = minus {a}",
     TACOp.NOT: "{r} = not {a}",
     TACOp.LABEL: "{r}:",
@@ -262,6 +264,7 @@ _FORMATS: dict[TACOp, str] = {
 _REQUIRED: dict[TACOp, str] = {
     TACOp.ASSIGN: "ra",
     TACOp.CONCAT: "rab",
+    TACOp.DYNAMIC_ADD: "rab",
     TACOp.LABEL: "r",
     TACOp.GOTO: "r",
     TACOp.IF_TRUE: "ra",

@@ -150,7 +150,7 @@ class FunctionMixin:
                 if owner.kind is ScopeKind.CLASS:
                     # Un método invocado sin «this.» dentro de su propia clase.
                     return self.method_call(node, None, callee.name)
-                arguments = [self.visit(argument) for argument in node.arguments]
+                arguments = self.evaluate_arguments(node.arguments)
                 return self.call(Name(self.function_label(symbol)), arguments, symbol.return_type is not None)
         from tac_generator import TACGenerationError
 

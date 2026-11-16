@@ -342,11 +342,33 @@ class TACGenerator(FunctionMixin, ObjectMixin, ExceptionMixin, ControlFlowMixin,
         op = SOURCE_BINARY_OPS.get(node.operator)
         if op is None:
             return self.generic_visit(node)
-        left = self.visit(node.left)
+        left = self.preserve_before(self.visit(node.left), (node.right,))
         right = self.visit(node.right)
         if op is TACOp.ADD and self._is_string_concat(node, left, right):
             op = TACOp.CONCAT
+        elif op is TACOp.ADD and any(
+            self.type_of(side) is None or self.type_of(side).kind in _UNINFERRED
+            for side in (node.left, node.right)
+        ):
+            op = TACOp.DYNAMIC_ADD
         return self.compute(op, left, right)
+
+    @staticmethod
+    def has_side_effects(node: ast.AstNode) -> bool:
+        if isinstance(node, (ast.AssignmentExpression, ast.CallExpression, ast.NewExpression)):
+            return True
+        return any(TACGenerator.has_side_effects(child) for child in ast.iter_child_nodes(node))
+
+    def preserve_before(self, value: Operand, following) -> Operand:
+        if isinstance(value, Var) and any(self.has_side_effects(node) for node in following):
+            return self._snapshot(value)
+        return value
+
+    def evaluate_arguments(self, nodes) -> list[Operand]:
+        return [
+            self.preserve_before(self.visit(node), nodes[index + 1:])
+            for index, node in enumerate(nodes)
+        ]
 
     def _is_string_concat(self, node: ast.BinaryExpression, left: Operand, right: Operand) -> bool:
         node_type = self.type_of(node)
@@ -383,7 +405,7 @@ class TACGenerator(FunctionMixin, ObjectMixin, ExceptionMixin, ControlFlowMixin,
     def visit_assignment_expression(self, node: ast.AssignmentExpression) -> Operand:
         target = node.target
         if isinstance(target, ast.MemberExpression):
-            instance = self.visit(target.object)
+            instance = self.preserve_before(self.visit(target.object), (node.value,))
             member = self.member_name(target.object, target.member)
             return self.store_field(instance, member, self.visit(node.value))
         if isinstance(target, ast.IdentifierExpression) and self.is_attribute(*self.resolve(target, target.name)):
@@ -398,8 +420,8 @@ class TACGenerator(FunctionMixin, ObjectMixin, ExceptionMixin, ControlFlowMixin,
             # mantener vivo el temporal de e.
             return variable
         if isinstance(target, ast.IndexExpression):
-            collection = self.visit(target.collection)
-            index = self.visit(target.index)
+            collection = self.preserve_before(self.visit(target.collection), (target.index, node.value))
+            index = self.preserve_before(self.visit(target.index), (node.value,))
             value = self.visit(node.value)
             self.emit(TACOp.INDEX_STORE, collection, index, value)
             self.temps.release(collection)
@@ -420,7 +442,7 @@ class TACGenerator(FunctionMixin, ObjectMixin, ExceptionMixin, ControlFlowMixin,
         return array
 
     def visit_index_expression(self, node: ast.IndexExpression) -> Temp:
-        collection = self.visit(node.collection)
+        collection = self.preserve_before(self.visit(node.collection), (node.index,))
         index = self.visit(node.index)
         return self.compute(TACOp.INDEX_LOAD, collection, index)
 

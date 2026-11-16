@@ -132,7 +132,7 @@ class ClassTranslationTests(unittest.TestCase):
         self.assertEqual(
             global_code(lines)[5:],
             [
-                "t1 = new Nodo", "param t1", "param 2", "call Nodo.constructor, 2", "a.siguiente = t1",
+                "t1 = a", "t2 = new Nodo", "param t2", "param 2", "call Nodo.constructor, 2", "t1.siguiente = t2",
                 "t1 = a.siguiente", "t1 = t1.valor", "print t1",
                 "t1 = new Nodo", "param t1", "param 3", "call Nodo.constructor, 2",
                 "t2 = method t1.leer", "param t1", "t1 = call t2, 1", "print t1",

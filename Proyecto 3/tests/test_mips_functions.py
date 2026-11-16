@@ -242,11 +242,11 @@ class RecursionTests(unittest.TestCase):
             instructions(call),
             [
                 "addiu $sp, $sp, -16",
-                "lw $t8, -20($fp)",  # t1 = n - 1, en el marco del llamador
+                "lw $t8, -24($fp)",  # t2 = n - 1; t1 conserva el valor de n
                 "sw $t8, 0($sp)",  # n de la nueva activación
                 "sw $zero, 4($sp)",  # enlace de acceso: P - 12 = 4
                 "jal fn_factorial",
-                "sw $v0, -20($fp)",  # t1 del llamador
+                "sw $v0, -24($fp)",  # t2 del llamador
             ],
         )
 

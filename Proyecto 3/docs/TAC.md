@@ -82,6 +82,7 @@ print(a);                 print a
 | `ASSIGN` | `x = y` | Copia el valor de `y` en `x` |
 | `ADD` `SUB` `MUL` `DIV` `MOD` | `x = y + z` (`-` `*` `/` `%`) | Aritmética entera. `/` es división entera |
 | `CONCAT` | `x = concat y, z` | Concatenación de `string` |
+| `DYNAMIC_ADD` | `x = dynamic_add y, z` | Suma cuando los tipos no se conocen al compilar. Las etiquetas en ejecución seleccionan suma entera o concatenación |
 | `LT` `LE` `GT` `GE` | `x = y < z` (`<=` `>` `>=`) | Comparación de enteros; `x` queda `true` o `false` |
 | `EQ` `NE` | `x = y == z` (`!=`) | Igualdad y desigualdad |
 | `NEG` | `x = minus y` | Negación aritmética |
