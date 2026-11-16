@@ -335,6 +335,15 @@ class InterfaceTests(unittest.TestCase):
         self.assertIn("3628800", output)
         self.assertIn("(interrumpida por excepción)", self.app.run_tree_text.get("1.0", "end"))
         self.assertEqual(self.app.run_summary_label.cget("text"), "EJECUTADO")
+        self.assertIsNotNone(self.app.run_graph.tree)
+        self.assertGreater(len(self.app.run_graph.nodes), 1)
+        self.app._toggle_tree_view()
+        self.assertFalse(self.app._tree_graph_visible)
+        self.assertEqual(self.app.tree_view_button.cget("text"), "Ver grafo")
+        self.app._toggle_tree_view()
+        self.assertTrue(self.app._tree_graph_visible)
+        self.app._clear_run()
+        self.assertIsNone(self.app.run_graph.tree)
 
 
 if __name__ == "__main__":

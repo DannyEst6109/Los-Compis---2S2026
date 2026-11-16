@@ -42,7 +42,13 @@ TAC** genera código ensamblador **MIPS32** que se ejecuta en el simulador
      instrucción TAC que traduce), cuántas instrucciones quitó la mirilla y
      con qué reglas, **Ver sin optimizar**, **Copiar** y **Guardar .asm**.
    - **Ejecución** (`F6`): ejecuta el programa en MARS y muestra su salida y
-     el **árbol de activación** de esa ejecución.
+     el **árbol de activación** de esa ejecución como grafo. **Ver texto /
+     Ver grafo** alterna las vistas; doble clic o Enter pliega/abre una
+     rama, las flechas seleccionan nodos y **Acercar / Alejar / Ajustar**
+     controlan el encuadre. Los nodos distinguen llamadas finalizadas,
+     interrumpidas por excepción y sin terminar. Las ramas profundas
+     empiezan plegadas; se dibujan hasta 500 nodos a la vez y la vista de
+     texto conserva el árbol completo.
    - **AST**, **Símbolos** y **Entornos** (registros de activación, área
      global y distribución de cada clase con su vtable).
 
@@ -68,7 +74,7 @@ I/O*. También por consola: `java -jar tools\Mars4_5.jar nc sm programa.asm`.
 python -m unittest discover -s tests -v      # o: .\verificar.bat
 ```
 
-523 pruebas. Las que ejecutan MARS se omiten automáticamente si no hay Java.
+528 pruebas. Las que ejecutan MARS se omiten automáticamente si no hay Java.
 Además de comparar la salida, verifican que `$sp` y `$fp` terminen en el
 tope de la pila.
 

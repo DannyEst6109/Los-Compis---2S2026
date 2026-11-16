@@ -22,6 +22,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from activation_tree import build_activation_tree, render_activation_tree, strip_trace
+from activation_graph import ActivationGraph
 from compiler import CompilationResult, compile_source
 from mars_runner import mars_available, mars_jar, run_mars, unavailable_reason
 
@@ -138,15 +139,22 @@ class MipsPanelsMixin:
         output_frame = ttk.Frame(sections, style="Surface.TFrame")
         tree_frame = ttk.Frame(sections, style="Surface.TFrame")
         sections.add(output_frame, weight=1)
-        sections.add(tree_frame, weight=1)
+        sections.add(tree_frame, weight=3)
         ttk.Label(output_frame, text="Salida del programa", style="Meta.TLabel").pack(anchor="w", pady=(0, 4))
-        self.run_output_text = self._text_area(output_frame, height=8)
+        self.run_output_text = self._text_area(output_frame, height=5)
         self.run_output_text.tag_configure("run_error", foreground=self.RED)
-        ttk.Label(tree_frame, text="Árbol de activación de esta ejecución", style="Meta.TLabel").pack(
-            anchor="w", pady=(8, 4)
-        )
+        tree_toolbar = ttk.Frame(tree_frame, style="Surface.TFrame")
+        tree_toolbar.pack(fill="x", pady=(8, 5))
+        ttk.Label(tree_toolbar, text="Árbol de activación de esta ejecución", style="Meta.TLabel").pack(side="left")
+        self.tree_view_button = ttk.Button(tree_toolbar, text="Ver texto", style="Secondary.TButton",
+                                           command=self._toggle_tree_view)
+        self.tree_view_button.pack(side="right")
         self.run_tree_text = self._text_area(tree_frame, height=8)
         self.run_tree_text.tag_configure("tree_unwound", foreground=self.RED)
+        self.run_tree_text.shell.pack_forget()
+        self.run_graph = ActivationGraph(tree_frame, self)
+        self.run_graph.pack(fill="both", expand=True)
+        self._tree_graph_visible = True
         self.run_empty_message = self._empty_label(
             self.run_output_text, "Compile (F5) y luego ejecute (F6)\npara ver la salida del programa."
         )
@@ -271,9 +279,21 @@ class MipsPanelsMixin:
         self.status_label.configure(text=f"Ensamblador guardado en {Path(selected).name} (ábralo en MARS para ejecutarlo)")
 
     # -- pestaña Ejecución ----------------------------------------------------
+    def _toggle_tree_view(self) -> None:
+        self._tree_graph_visible = not self._tree_graph_visible
+        if self._tree_graph_visible:
+            self.run_tree_text.shell.pack_forget()
+            self.run_graph.pack(fill="both", expand=True)
+            self.tree_view_button.configure(text="Ver texto")
+        else:
+            self.run_graph.pack_forget()
+            self.run_tree_text.shell.pack(fill="both", expand=True)
+            self.tree_view_button.configure(text="Ver grafo")
+
     def _clear_run(self) -> None:
         self._set_text(self.run_output_text, "")
         self._set_text(self.run_tree_text, "")
+        self.run_graph.clear()
         self._set_badge(self.run_summary_label, "SIN EJECUTAR")
         self.run_detail_label.configure(text=self._mars_description())
         self.run_empty_message.configure(
@@ -297,6 +317,11 @@ class MipsPanelsMixin:
             return
         self.inspector_tabs.select(self.run_tab)
         self._running = True
+        self.run_graph.clear()
+        self._set_text(self.run_tree_text, "")
+        self._set_text(self.run_output_text, "")
+        self.run_empty_message.configure(text="Ejecutando el programa en MARS…")
+        self.run_empty_message.place(relx=0.5, rely=0.45, anchor="center")
         self.run_button.state(["disabled"])
         self._set_badge(self.run_summary_label, "EJECUTANDO…")
         self.run_detail_label.configure(text="MARS está ejecutando el programa…")
@@ -344,7 +369,9 @@ class MipsPanelsMixin:
             drawing = render_activation_tree(tree)
             calls = tree.count()
             depth = tree.depth
+            self.run_graph.show_tree(tree)
         except Exception as error:  # noqa: BLE001
+            self.run_graph.clear()
             drawing, calls, depth = f"No se pudo construir el árbol: {error}", 0, 0
         self._set_text(self.run_tree_text, drawing)
         self.run_tree_text.configure(state="normal")
